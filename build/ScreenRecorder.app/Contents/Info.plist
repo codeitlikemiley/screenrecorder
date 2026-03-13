@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>ScreenRecorder</string>
+    <key>CFBundleDisplayName</key>
+    <string>Screen Recorder</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.screenrecorder.app</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>ScreenRecorder</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSCameraUsageDescription</key>
+    <string>Screen Recorder needs camera access to show your face in tutorial recordings.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Screen Recorder needs microphone access to record your voice in tutorials.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Screen Recorder needs screen recording permission to capture your screen.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Screen Recorder uses Apple Events for accessibility features.</string>
+</dict>
+</plist>

@@ -1,0 +1,25 @@
+# Build artifacts
+.build/
+.swiftpm/
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# IDE
+.vscode/
+.idea/
+
+# Recordings output
+*.mov
+*.mp4
+
+# Gemini
+.gemini/
