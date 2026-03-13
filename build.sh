@@ -44,5 +44,10 @@ codesign --force --sign "$SIGNING_IDENTITY" \
 echo "📋 Registering execution policy..."
 spctl --add --label "ScreenRecorder" "$APP_DIR" 2>/dev/null || true
 
+# Reset stale Accessibility permission (CDHash changes on each rebuild)
+# This clears the old entry so the new binary gets a fresh permission grant
+echo "🔑 Resetting Accessibility permission for fresh CDHash..."
+tccutil reset Accessibility com.screenrecorder.app 2>/dev/null || true
+
 echo ""
 echo "✅ Done! Run:  open $APP_DIR"

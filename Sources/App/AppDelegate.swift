@@ -40,11 +40,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let manager = GlobalHotkeyManager()
         manager.appState = appState
+
+        // Not-recording: enable/disable with permissions
         manager.onToggleRecording = { [weak coordinator] in
             Task { @MainActor in
                 await coordinator?.toggleRecording()
             }
         }
+        manager.onToggleCamera = { [weak coordinator] in
+            coordinator?.toggleCamera()
+        }
+        manager.onToggleKeystrokeMonitor = { [weak coordinator] in
+            coordinator?.toggleKeystrokeMonitor()
+        }
+
+        // During-recording: show/hide and mute (no re-initialization)
+        manager.onShowHideCamera = { [weak coordinator] in
+            coordinator?.overlayManager.toggleCamera()
+        }
+        manager.onShowHideKeystroke = { [weak coordinator] in
+            coordinator?.overlayManager.toggleKeystrokeVisibility()
+        }
+        manager.onMuteUnmuteMic = { [weak appState] in
+            appState?.isMicMuted.toggle()
+        }
+
         manager.registerHotkeys()
         hotkeyManager = manager
     }

@@ -85,6 +85,9 @@ class CameraPreviewNSView: NSView {
         layer.cornerRadius = bounds.width / 2
         layer.masksToBounds = true
 
+        // Mirror horizontally (natural mirror like FaceTime/Zoom)
+        layer.transform = CATransform3DMakeScale(-1, 1, 1)
+
         // Set frame to current bounds (may be zero initially, fixed in layout())
         layer.frame = bounds
 

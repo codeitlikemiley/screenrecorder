@@ -37,11 +37,13 @@ class OverlayWindowManager {
             }
             .store(in: &cancellables)
 
-        // Observe active keystrokes to keep window content updated
-        appState.$activeKeystrokes
+        // Observe keystroke text changes to keep window on top
+        appState.$keystrokeVisible
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                self?.keystrokeWindow?.orderFrontRegardless()
+            .sink { [weak self] visible in
+                if visible {
+                    self?.keystrokeWindow?.orderFrontRegardless()
+                }
             }
             .store(in: &cancellables)
     }
@@ -109,7 +111,7 @@ class OverlayWindowManager {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
-        window.sharingType = .none  // Invisible to screen capture — only user sees it
+        window.sharingType = .none  // Hide from screen capture (we composite camera ourselves in VideoWriter)
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = true
@@ -173,16 +175,25 @@ class OverlayWindowManager {
         keystrokeWindow?.orderOut(nil)
     }
 
+    /// Toggle keystroke overlay visibility (for during-recording show/hide)
+    func toggleKeystrokeVisibility() {
+        if keystrokeWindow?.isVisible == true {
+            hideKeystrokeOverlay()
+        } else {
+            showKeystrokeOverlay()
+        }
+    }
+
     private func createKeystrokeWindow(appState: AppState) {
         guard let screen = NSScreen.main else { return }
 
         let screenFrame = screen.frame
-        let windowWidth: CGFloat = 800
-        let windowHeight: CGFloat = 120
+        let windowWidth = screenFrame.width
+        let windowHeight: CGFloat = 100
 
-        // Position at bottom center of screen
-        let originX = screenFrame.origin.x + (screenFrame.width - windowWidth) / 2
-        let originY = screenFrame.origin.y + 60  // 60px from bottom
+        // Position at bottom of screen, full width
+        let originX = screenFrame.origin.x
+        let originY = screenFrame.origin.y
 
         let windowFrame = NSRect(x: originX, y: originY, width: windowWidth, height: windowHeight)
 
@@ -200,6 +211,9 @@ class OverlayWindowManager {
         window.ignoresMouseEvents = true  // Click-through
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         window.isReleasedWhenClosed = false
+
+        // Allow capture so keystrokes appear in recordings
+        window.sharingType = .readOnly
 
         // Host the SwiftUI view
         let overlayView = KeystrokeOverlay(appState: appState)

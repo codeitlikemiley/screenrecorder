@@ -98,14 +98,18 @@ class ScreenCaptureManager: NSObject, ObservableObject, SCContentSharingPickerOb
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(frameRate))
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.showsCursor = true
-        config.capturesAudio = true
+        // System audio: only when mic is OFF (mic picks up ambient sounds naturally)
+        // Having both causes double audio — same click recorded from both system + mic
+        config.capturesAudio = !captureMicrophone
         config.sampleRate = 48000
         config.channelCount = 2
 
-        // Enable microphone in config (macOS 15+)
+        // Enable microphone capture (macOS 15+)
         if captureMicrophone {
             if #available(macOS 15.0, *) {
                 config.captureMicrophone = true
+                config.sampleRate = 48000
+                config.channelCount = 1  // Mono mic
             }
         }
 

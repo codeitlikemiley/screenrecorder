@@ -58,12 +58,39 @@ class RecordingCoordinator: ObservableObject {
 
         if !isSetUp { await setup() }
 
-        // Request camera & mic if not determined
-        if AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined {
-            appState.hasCameraPermission = await AVCaptureDevice.requestAccess(for: .video)
+        // 1. Request all needed permissions (prompt if first time, open Settings if denied)
+        if appState.isCameraEnabled {
+            let granted = await PermissionManager.shared.requestCameraPermission()
+            appState.hasCameraPermission = granted
+            if !granted { appState.isCameraEnabled = false }
         }
-        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-            appState.hasMicrophonePermission = await AVCaptureDevice.requestAccess(for: .audio)
+        if appState.isMicrophoneEnabled {
+            let granted = await PermissionManager.shared.requestMicrophonePermission()
+            appState.hasMicrophonePermission = granted
+            if !granted { appState.isMicrophoneEnabled = false }
+        }
+        if appState.isKeystrokeOverlayEnabled {
+            let granted = PermissionManager.shared.requestAccessibilityPermission()
+            appState.hasAccessibilityPermission = granted
+            if !granted { appState.isKeystrokeOverlayEnabled = false }
+        }
+
+        // 2. Check if any new permissions were granted since app launch → restart needed
+        let newGrants = PermissionManager.shared.checkForNewGrants()
+        if !newGrants.isEmpty {
+            let names = newGrants.joined(separator: ", ")
+            let alert = NSAlert()
+            alert.messageText = "Restart Required"
+            alert.informativeText = "New permissions granted: \(names).\n\nmacOS requires an app restart for these to take effect. Restart now?"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "Restart Now")
+            alert.addButton(withTitle: "Continue Anyway")
+
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                PermissionManager.shared.restartApp()
+                return
+            }
         }
 
         // Show system content picker (handles screen recording permission internally)
@@ -144,7 +171,9 @@ class RecordingCoordinator: ObservableObject {
             screenCapture.onAudioSampleBuffer = { [weak writer] buffer in
                 writer?.appendAudioBuffer(buffer)
             }
-            screenCapture.onMicSampleBuffer = { [weak writer] buffer in
+            screenCapture.onMicSampleBuffer = { [weak writer, weak self] buffer in
+                // During recording, isMicMuted silences mic without stopping it
+                guard self?.appState.isMicMuted != true else { return }
                 writer?.appendMicBuffer(buffer)
             }
 
@@ -264,31 +293,32 @@ class RecordingCoordinator: ObservableObject {
             startKeystrokeMonitorWithPermissionCheck()
         } else {
             keystrokeMonitor.stopMonitoring()
-            appState.activeKeystrokes.removeAll()
+            appState.keystrokeDisplayText = ""
+            appState.keystrokeVisible = false
         }
     }
 
     // MARK: - Helpers
 
     private func startKeystrokeMonitorWithPermissionCheck() {
-        // Don't prompt — just try to start monitoring.
-        // If accessibility isn't granted, the CGEvent tap will fail silently.
-        // This avoids the repeated dialog on every rebuild.
-        if AXIsProcessTrusted() {
+        let trusted = AXIsProcessTrusted()
+        print("🔑 Accessibility check: AXIsProcessTrusted = \(trusted)")
+
+        // Try to create the event tap first (might work even if AXIsProcessTrusted is false)
+        keystrokeMonitor.startMonitoring()
+
+        if keystrokeMonitor.isMonitoring {
             appState.hasAccessibilityPermission = true
-            keystrokeMonitor.startMonitoring()
-        } else {
-            // Try anyway — the permission might be granted for the bundle but
-            // AXIsProcessTrusted() returns false due to CDHash mismatch after rebuild
-            keystrokeMonitor.startMonitoring()
-            // If it actually worked (event tap succeeded), mark as granted
-            if keystrokeMonitor.isMonitoring {
-                appState.hasAccessibilityPermission = true
-            } else {
-                appState.hasAccessibilityPermission = false
-                print("⚠️ Accessibility permission needed for keystroke overlay")
-                print("   Enable in System Settings → Privacy → Accessibility")
-            }
+            print("✅ Keystroke monitoring started successfully")
+            return
         }
+
+        // Tap failed — prompt the user ONCE to grant permission for this binary
+        print("⚠️ CGEvent tap failed, prompting for Accessibility permission...")
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+
+        appState.hasAccessibilityPermission = false
+        print("❌ Keystroke overlay disabled — approve Accessibility permission, then restart recording")
     }
 }

@@ -1,16 +1,84 @@
 import AVFoundation
 import AppKit
 
+/// Permission state snapshot for change detection
+struct PermissionSnapshot {
+    let camera: Bool
+    let microphone: Bool
+    let accessibility: Bool
+
+    /// Count of granted (truthy) permissions
+    var grantedCount: Int {
+        [camera, microphone, accessibility].filter { $0 }.count
+    }
+}
+
 /// Centralized permission manager for all system permissions the app requires.
-/// Uses SILENT, non-prompting APIs only. Never triggers OS dialogs on its own.
+/// Each feature checks and requests its permission when toggled on.
 @MainActor
 class PermissionManager {
     static let shared = PermissionManager()
+
+    /// Snapshot taken at app startup (or after last restart)
+    private(set) var startupSnapshot: PermissionSnapshot
+
+    private init() {
+        // Capture initial permission state
+        startupSnapshot = PermissionSnapshot(
+            camera: AVCaptureDevice.authorizationStatus(for: .video) == .authorized,
+            microphone: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
+            accessibility: AXIsProcessTrusted()
+        )
+    }
+
+    // MARK: - Snapshot & Change Detection
+
+    /// Check current permissions and return names of newly granted ones (compared to startup)
+    func checkForNewGrants() -> [String] {
+        let current = PermissionSnapshot(
+            camera: AVCaptureDevice.authorizationStatus(for: .video) == .authorized,
+            microphone: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
+            accessibility: AXIsProcessTrusted()
+        )
+
+        var newGrants: [String] = []
+        if current.camera && !startupSnapshot.camera { newGrants.append("Camera") }
+        if current.microphone && !startupSnapshot.microphone { newGrants.append("Microphone") }
+        if current.accessibility && !startupSnapshot.accessibility { newGrants.append("Accessibility") }
+
+        return newGrants
+    }
+
+    /// Restart the app (launch new instance, terminate current)
+    func restartApp() {
+        let url = Bundle.main.bundleURL
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            NSApp.terminate(nil)
+        }
+    }
 
     // MARK: - Camera Permission
 
     func checkCameraPermission() -> Bool {
         return AVCaptureDevice.authorizationStatus(for: .video) == .authorized
+    }
+
+    func requestCameraPermission() async -> Bool {
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        switch status {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await AVCaptureDevice.requestAccess(for: .video)
+        case .denied, .restricted:
+            openSystemSettings(pane: "Privacy_Camera")
+            return false
+        @unknown default:
+            return false
+        }
     }
 
     // MARK: - Microphone Permission
@@ -19,25 +87,44 @@ class PermissionManager {
         return AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
-    // MARK: - Accessibility Permission
+    func requestMicrophonePermission() async -> Bool {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch status {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await AVCaptureDevice.requestAccess(for: .audio)
+        case .denied, .restricted:
+            openSystemSettings(pane: "Privacy_Microphone")
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
+    // MARK: - Accessibility Permission (for keystroke overlay)
 
     func checkAccessibilityPermission() -> Bool {
         return AXIsProcessTrusted()
     }
 
-    /// Shows the system Accessibility permission prompt dialog.
-    func requestAccessibilityPermission() {
+    func requestAccessibilityPermission() -> Bool {
+        if AXIsProcessTrusted() { return true }
+        // This shows the system dialog asking user to enable Accessibility
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        AXIsProcessTrustedWithOptions(options)
+        let result = AXIsProcessTrustedWithOptions(options)
+        if !result {
+            // Also open System Settings directly as a fallback
+            openSystemSettings(pane: "Privacy_Accessibility")
+        }
+        return result
     }
 
-    // MARK: - Open System Preferences
+    // MARK: - Open System Settings
 
-    func openScreenRecordingPreferences() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
-    }
-
-    func openAccessibilityPreferences() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    func openSystemSettings(pane: String) {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
+            NSWorkspace.shared.open(url)
+        }
     }
 }

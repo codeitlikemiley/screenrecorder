@@ -262,6 +262,18 @@ class VideoWriter {
         let scaledCamera = cameraImage
             .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
 
+        // Mirror horizontally to match the preview overlay (natural mirror)
+        let flippedCamera = scaledCamera
+            .transformed(by: CGAffineTransform(scaleX: -1, y: 1)
+                .translatedBy(x: -scaledCamera.extent.width, y: 0))
+
+        // Center-crop to a square (camera is wider than tall)
+        let scaledWidth = flippedCamera.extent.width
+        let scaledHeight = flippedCamera.extent.height
+        let cropOffsetX = (scaledWidth - targetSize) / 2
+        let cropOffsetY = (scaledHeight - targetSize) / 2
+        let centerCropRect = CGRect(x: cropOffsetX, y: cropOffsetY, width: targetSize, height: targetSize)
+
         // Crop to circle using radial gradient as mask
         let center = CIVector(x: targetSize / 2, y: targetSize / 2)
         let circularMask = CIFilter(name: "CIRadialGradient", parameters: [
@@ -272,8 +284,10 @@ class VideoWriter {
             "inputColor1": CIColor.clear
         ])!.outputImage!.cropped(to: CGRect(x: 0, y: 0, width: targetSize, height: targetSize))
 
-        // Crop scaled camera to circle size
-        let croppedCamera = scaledCamera.cropped(to: CGRect(x: 0, y: 0, width: targetSize, height: targetSize))
+        // Crop scaled camera from center, then shift to origin for masking
+        let croppedCamera = flippedCamera
+            .cropped(to: centerCropRect)
+            .transformed(by: CGAffineTransform(translationX: -cropOffsetX, y: -cropOffsetY))
 
         // Apply circular mask
         let maskedCamera = croppedCamera.applyingFilter("CIBlendWithMask", parameters: [

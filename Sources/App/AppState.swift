@@ -18,13 +18,21 @@ class AppState: ObservableObject {
     @Published var isKeystrokeOverlayEnabled = false
     @Published var isControlBarVisible = true
     @Published var isMicrophoneEnabled = true
+    @Published var isMicMuted = false           // During-recording mute (doesn't disable mic)
+    @Published var isCameraPreviewHidden = false // During-recording hide (doesn't disable camera)
 
     // MARK: - Camera
     @Published var cameraPosition: CGPoint = .zero // 0,0 means "default" (bottom-right)
     @Published var cameraSize: CGFloat = 200
 
-    // MARK: - Keystrokes
-    @Published var activeKeystrokes: [KeystrokeEvent] = []
+    // MARK: - Keystrokes (coalescing single-bar display)
+    @Published var keystrokeDisplayText: String = ""
+    @Published var keystrokeVisible: Bool = false
+    var lastKeystrokeTime: Date = .distantPast
+    var lastKeystrokeString: String = ""
+    var lastRenderedSegment: String = ""
+    var keystrokeRepeatCount: Int = 0
+    var keystrokeFadeWorkItem: DispatchWorkItem?
 
     // MARK: - Output Settings
     @Published var outputFormat: OutputFormat = .movHEVC
@@ -115,12 +123,55 @@ class AppState: ObservableObject {
     // MARK: - Add Keystroke
 
     func addKeystroke(_ event: KeystrokeEvent) {
-        activeKeystrokes.append(event)
-        // Auto-remove after 2 seconds
-        let eventId = event.id
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            self?.activeKeystrokes.removeAll { $0.id == eventId }
+        lastKeystrokeTime = Date()
+        keystrokeVisible = true
+
+        let display = event.displayString
+
+        // Coalesce repeated identical keys (e.g. "A ×3")
+        if display == lastKeystrokeString && !event.isSpecialKey {
+            keystrokeRepeatCount += 1
+            // Replace the last entry with count
+            if let range = keystrokeDisplayText.range(of: lastRenderedSegment, options: .backwards) {
+                keystrokeDisplayText.replaceSubrange(range, with: "\(display) ×\(keystrokeRepeatCount)")
+                lastRenderedSegment = "\(display) ×\(keystrokeRepeatCount)"
+            }
+        } else {
+            // New key — append with separator
+            let separator = keystrokeDisplayText.isEmpty ? "" : "  "
+            let segment: String
+            if event.modifiers.isEmpty && !event.isSpecialKey {
+                segment = display
+            } else {
+                segment = display
+            }
+            keystrokeDisplayText += separator + segment
+            lastKeystrokeString = display
+            lastRenderedSegment = segment
+            keystrokeRepeatCount = 1
         }
+
+        // Trim if too long (keep last ~60 chars)
+        if keystrokeDisplayText.count > 80 {
+            let start = keystrokeDisplayText.index(keystrokeDisplayText.endIndex, offsetBy: -60)
+            keystrokeDisplayText = String(keystrokeDisplayText[start...])
+        }
+
+        // Schedule fade-out after 2s of inactivity
+        keystrokeFadeWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.keystrokeVisible = false
+            // Clear text after fade completes
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.keystrokeDisplayText = ""
+                self?.lastKeystrokeString = ""
+                self?.lastRenderedSegment = ""
+                self?.keystrokeRepeatCount = 0
+            }
+        }
+        keystrokeFadeWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
     }
 }
 

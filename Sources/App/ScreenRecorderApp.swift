@@ -21,6 +21,8 @@ struct ScreenRecorderApp: App {
         MenuBarExtra {
             MenuBarView(appState: appState, coordinator: coordinator)
                 .task {
+                    // Wire up AppDelegate for global hotkeys
+                    appDelegate.configure(appState: appState, coordinator: coordinator)
                     // Run setup when the menu first appears
                     await coordinator.setup()
                 }
@@ -76,13 +78,48 @@ struct MenuBarView: View {
 
             Divider()
 
-            Toggle("📷 Camera  ⌘⇧C", isOn: $appState.isCameraEnabled)
-            Toggle("🎤 Microphone", isOn: $appState.isMicrophoneEnabled)
+            Toggle("📷 Camera  ⌘⇧C", isOn: Binding(
+                get: { appState.isCameraEnabled },
+                set: { newValue in
+                    if newValue {
+                        Task {
+                            let granted = await PermissionManager.shared.requestCameraPermission()
+                            appState.hasCameraPermission = granted
+                            appState.isCameraEnabled = granted
+                            if granted { coordinator.toggleCamera() }
+                        }
+                    } else {
+                        appState.isCameraEnabled = false
+                        coordinator.toggleCamera()
+                    }
+                }
+            ))
+            Toggle("🎤 Microphone", isOn: Binding(
+                get: { appState.isMicrophoneEnabled },
+                set: { newValue in
+                    if newValue {
+                        Task {
+                            let granted = await PermissionManager.shared.requestMicrophonePermission()
+                            appState.hasMicrophonePermission = granted
+                            appState.isMicrophoneEnabled = granted
+                        }
+                    } else {
+                        appState.isMicrophoneEnabled = false
+                    }
+                }
+            ))
             Toggle("⌨️ Keystroke Overlay  ⌘⇧K", isOn: Binding(
                 get: { appState.isKeystrokeOverlayEnabled },
                 set: { newValue in
-                    appState.isKeystrokeOverlayEnabled = newValue
-                    coordinator.toggleKeystrokeMonitor()
+                    if newValue {
+                        let granted = PermissionManager.shared.requestAccessibilityPermission()
+                        appState.hasAccessibilityPermission = granted
+                        appState.isKeystrokeOverlayEnabled = granted
+                        if granted { coordinator.toggleKeystrokeMonitor() }
+                    } else {
+                        appState.isKeystrokeOverlayEnabled = false
+                        coordinator.toggleKeystrokeMonitor()
+                    }
                 }
             ))
 
