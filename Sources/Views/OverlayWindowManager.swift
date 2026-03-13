@@ -46,9 +46,53 @@ class OverlayWindowManager {
                 }
             }
             .store(in: &cancellables)
+
+        // Observe mic volume changes to show HUD
+        appState.$showVolumeOverlay
+            .receive(on: RunLoop.main)
+            .sink { [weak self] show in
+                if show {
+                    self?.showVolumeHUD()
+                } else {
+                    self?.volumeWindow?.orderOut(nil)
+                }
+            }
+            .store(in: &cancellables)
     }
 
-    // MARK: - Camera Overlay Window
+    // MARK: - Volume Overlay HUD
+
+    private var volumeWindow: NSWindow?
+
+    func showVolumeHUD() {
+        guard let appState = appState, let screen = NSScreen.main else { return }
+
+        if volumeWindow == nil {
+            let hostView = NSHostingView(rootView: VolumeOverlay(appState: appState))
+            let window = NSPanel(
+                contentRect: NSRect(x: 0, y: 0, width: 260, height: 100),
+                styleMask: [.nonactivatingPanel, .hudWindow],
+                backing: .buffered,
+                defer: false
+            )
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.hasShadow = false
+            window.level = .screenSaver
+            window.ignoresMouseEvents = true
+            window.contentView = hostView
+            window.sharingType = .none
+            volumeWindow = window
+        }
+
+        // Center on screen
+        let screenFrame = screen.visibleFrame
+        let windowSize = volumeWindow!.frame.size
+        let x = screenFrame.midX - windowSize.width / 2
+        let y = screenFrame.midY - windowSize.height / 2
+        volumeWindow?.setFrameOrigin(NSPoint(x: x, y: y))
+        volumeWindow?.orderFrontRegardless()
+    }
 
     func showCamera() {
         guard let appState = appState, let cameraManager = cameraManager else { return }

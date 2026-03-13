@@ -64,6 +64,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         manager.onMuteUnmuteMic = { [weak appState] in
             appState?.isMicMuted.toggle()
         }
+        manager.onOpenRecordingsFolder = { [weak appState] in
+            guard let dir = appState?.saveDirectory else { return }
+            NSWorkspace.shared.open(dir)
+        }
 
         manager.registerHotkeys()
         hotkeyManager = manager

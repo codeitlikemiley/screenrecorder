@@ -104,12 +104,23 @@ class ScreenCaptureManager: NSObject, ObservableObject, SCContentSharingPickerOb
         config.sampleRate = 48000
         config.channelCount = 2
 
-        // Enable microphone capture (macOS 15+)
+        // Enable microphone capture (macOS 15+) with voice isolation
         if captureMicrophone {
             if #available(macOS 15.0, *) {
                 config.captureMicrophone = true
                 config.sampleRate = 48000
                 config.channelCount = 1  // Mono mic
+            }
+
+            // Request Voice Isolation via macOS system UI if not already active
+            // This enables Apple's neural noise cancellation (filters AC, fans, etc.)
+            if #available(macOS 14.0, *) {
+                if AVCaptureDevice.activeMicrophoneMode != .voiceIsolation {
+                    AVCaptureDevice.showSystemUserInterface(.microphoneModes)
+                    print("🎙️ Showing mic mode picker — select Voice Isolation for noise cancellation")
+                } else {
+                    print("🎙️ Voice Isolation already active")
+                }
             }
         }
 

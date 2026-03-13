@@ -2,6 +2,7 @@ import AVFoundation
 import CoreMedia
 import CoreVideo
 import CoreImage
+import Accelerate
 
 /// Manages video file writing using AVAssetWriter.
 /// Supports HEVC (H.265) and H.264 encoding to MOV/MP4 containers.
@@ -239,6 +240,66 @@ class VideoWriter {
                 micInput.append(sampleBuffer)
             }
         }
+    }
+
+    /// Append mic buffer with gain applied (volume scaling)
+    func appendMicBuffer(_ sampleBuffer: CMSampleBuffer, gain: Float) {
+        guard isWriting, sessionStarted else { return }
+        guard let scaledBuffer = applyGain(to: sampleBuffer, gain: gain) else {
+            // Fallback: append without scaling
+            appendMicBuffer(sampleBuffer)
+            return
+        }
+        writerQueue.sync {
+            guard let micInput = micInput,
+                  let writer = assetWriter,
+                  writer.status == .writing else { return }
+
+            let timestamp = CMSampleBufferGetPresentationTimeStamp(scaledBuffer)
+            guard timestamp.isValid && !timestamp.isIndefinite else { return }
+
+            if micInput.isReadyForMoreMediaData {
+                micInput.append(scaledBuffer)
+            }
+        }
+    }
+
+    /// Apply gain to audio sample buffer using vDSP
+    private func applyGain(to buffer: CMSampleBuffer, gain: Float) -> CMSampleBuffer? {
+        guard let blockBuffer = CMSampleBufferGetDataBuffer(buffer) else { return nil }
+
+        let length = CMBlockBufferGetDataLength(blockBuffer)
+        guard length > 0 else { return nil }
+
+        // Get audio data
+        var dataPointer: UnsafeMutablePointer<Int8>?
+        var lengthAtOffset: Int = 0
+        let status = CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: &lengthAtOffset, totalLengthOut: nil, dataPointerOut: &dataPointer)
+        guard status == kCMBlockBufferNoErr, let data = dataPointer else { return nil }
+
+        // Check format — assume 16-bit PCM (standard mic format)
+        guard let formatDesc = CMSampleBufferGetFormatDescription(buffer) else { return nil }
+        let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee
+        
+        if let asbd = asbd, asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
+            // Float32 audio
+            let sampleCount = length / MemoryLayout<Float>.size
+            data.withMemoryRebound(to: Float.self, capacity: sampleCount) { floatPtr in
+                var g = gain
+                vDSP_vsmul(floatPtr, 1, &g, floatPtr, 1, vDSP_Length(sampleCount))
+            }
+        } else {
+            // Int16 PCM audio — convert, scale, convert back
+            let sampleCount = length / MemoryLayout<Int16>.size
+            data.withMemoryRebound(to: Int16.self, capacity: sampleCount) { int16Ptr in
+                for i in 0..<sampleCount {
+                    let scaled = Float(int16Ptr[i]) * gain
+                    int16Ptr[i] = Int16(max(-32768, min(32767, scaled)))
+                }
+            }
+        }
+
+        return buffer  // Modified in-place
     }
 
     // MARK: - Camera Compositing

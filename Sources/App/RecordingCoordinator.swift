@@ -172,9 +172,18 @@ class RecordingCoordinator: ObservableObject {
                 writer?.appendAudioBuffer(buffer)
             }
             screenCapture.onMicSampleBuffer = { [weak writer, weak self] buffer in
-                // During recording, isMicMuted silences mic without stopping it
-                guard self?.appState.isMicMuted != true else { return }
-                writer?.appendMicBuffer(buffer)
+                // During recording, isMicMuted or volume 0 silences mic
+                guard let self = self else { return }
+                let volume = self.appState.micVolume
+                guard !self.appState.isMicMuted, volume > 0 else { return }
+
+                // Scale audio by volume: 5 = 1.0x (default), 10 = 2.0x, 1 = 0.2x
+                if volume != 5 {
+                    let gain = Float(volume) / 5.0
+                    writer?.appendMicBuffer(buffer, gain: gain)
+                } else {
+                    writer?.appendMicBuffer(buffer)
+                }
             }
 
             // Start screen capture using the picked filter

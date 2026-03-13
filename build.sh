@@ -32,6 +32,12 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BINARY" "$MACOS_DIR/ScreenRecorder"
 cp Resources/Info.plist "$CONTENTS_DIR/Info.plist"
 
+# Copy app icon if it exists
+if [ -f "Resources/AppIcon.icns" ]; then
+    cp Resources/AppIcon.icns "$RESOURCES_DIR/AppIcon.icns"
+    echo "🎨 App icon included"
+fi
+
 # Sign the .app bundle with hardened runtime + entitlements
 echo "🔏 Signing with developer certificate (hardened runtime)..."
 codesign --force --sign "$SIGNING_IDENTITY" \

@@ -1,6 +1,11 @@
 import SwiftUI
 import AppKit
 
+/// Notification posted by the ⌘, hotkey to open Settings
+extension Notification.Name {
+    static let openSettings = Notification.Name("com.screenrecorder.openSettings")
+}
+
 /// Main application entry point.
 /// Uses MenuBarExtra for always-accessible menu bar presence.
 @main
@@ -50,6 +55,7 @@ struct ScreenRecorderApp: App {
 struct MenuBarView: View {
     @ObservedObject var appState: AppState
     @ObservedObject var coordinator: RecordingCoordinator
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         Group {
@@ -67,11 +73,11 @@ struct MenuBarView: View {
                     Text("Recording — \(appState.formattedDuration)")
                 }
 
-                Button("⏹ Stop Recording  ⌘⇧R") {
+                Button("⏹ Stop Recording  ⌘⇧S") {
                     Task { await coordinator.stopRecording() }
                 }
             } else {
-                Button("⏺ Start Recording  ⌘⇧R") {
+                Button("⏺ Start Recording  ⌘⇧S") {
                     Task { await coordinator.startRecording() }
                 }
             }
@@ -94,7 +100,7 @@ struct MenuBarView: View {
                     }
                 }
             ))
-            Toggle("🎤 Microphone", isOn: Binding(
+            Toggle("🎤 Microphone  ⌘⇧M", isOn: Binding(
                 get: { appState.isMicrophoneEnabled },
                 set: { newValue in
                     if newValue {
@@ -133,20 +139,33 @@ struct MenuBarView: View {
                 }
             }
 
+            // Mute/unmute mic during recording
+            if appState.isRecording && appState.isMicrophoneEnabled {
+                Button(appState.isMicMuted
+                    ? "🔇 Unmute Mic  ⌘⇧M"
+                    : "🔊 Mute Mic  ⌘⇧M"
+                ) {
+                    appState.isMicMuted.toggle()
+                }
+            }
+
             Divider()
 
-            Button("📂 Open Recordings Folder") {
+            Button("📂 Open Recordings  ⌘⇧F") {
                 NSWorkspace.shared.open(appState.saveDirectory)
             }
 
             SettingsLink {
-                Text("⚙️ Settings...")
+                Text("⚙️ Settings...  ⌘,")
             }
 
             Button("Quit") {
                 NSApplication.shared.terminate(nil)
             }
             .keyboardShortcut("q")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
+            openSettings()
         }
     }
 }
