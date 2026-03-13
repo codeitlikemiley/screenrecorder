@@ -98,9 +98,8 @@ class ScreenCaptureManager: NSObject, ObservableObject, SCContentSharingPickerOb
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(frameRate))
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.showsCursor = true
-        // System audio: only when mic is OFF (mic picks up ambient sounds naturally)
-        // Having both causes double audio — same click recorded from both system + mic
-        config.capturesAudio = !captureMicrophone
+        // Always capture system audio (includes video call audio from other participants)
+        config.capturesAudio = true
         config.sampleRate = 48000
         config.channelCount = 2
 

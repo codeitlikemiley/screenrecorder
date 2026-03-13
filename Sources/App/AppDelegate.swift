@@ -58,9 +58,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         manager.onShowHideCamera = { [weak coordinator] in
             coordinator?.overlayManager.toggleCamera()
         }
-        manager.onShowHideKeystroke = { [weak coordinator] in
-            coordinator?.overlayManager.toggleKeystrokeVisibility()
-        }
         manager.onMuteUnmuteMic = { [weak appState] in
             appState?.isMicMuted.toggle()
         }
@@ -73,24 +70,4 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager = manager
     }
 
-    // MARK: - Window Helpers
-
-    /// Configure a window as a floating overlay (click-through, no shadow, always on top)
-    static func configureOverlayWindow(_ window: NSWindow) {
-        window.level = .floating
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.hasShadow = false
-        window.ignoresMouseEvents = false
-    }
-
-    /// Configure a window as a HUD panel
-    static func configureHUDWindow(_ window: NSWindow) {
-        window.level = .statusBar
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.hasShadow = true
-    }
 }

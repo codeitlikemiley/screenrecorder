@@ -7,12 +7,12 @@ let package = Package(
         .macOS(.v14)
     ],
     dependencies: [
-        .package(url: "https://github.com/soffes/HotKey.git", from: "0.2.1")
+        .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "2.2.3")
     ],
     targets: [
         .executableTarget(
             name: "ScreenRecorder",
-            dependencies: ["HotKey"],
+            dependencies: ["KeyboardShortcuts"],
             path: "Sources",
             linkerSettings: [
                 .linkedFramework("ScreenCaptureKit"),

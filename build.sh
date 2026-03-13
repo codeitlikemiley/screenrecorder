@@ -5,6 +5,9 @@ SIGNING_IDENTITY="Apple Development: Uriah Galang (SLT9H2M79A)"
 TEAM_ID="5KZ8MD34QW"
 APP_DIR=".build/ScreenRecorder.app"
 
+# Kill existing instance to prevent -600 error on relaunch
+pkill -f "ScreenRecorder" 2>/dev/null || true
+
 # Build using Xcode's build system (handles signing + execution policy registration)
 echo "🔨 Building with xcodebuild..."
 xcodebuild -scheme ScreenRecorder -configuration Debug \
@@ -42,6 +45,7 @@ fi
 echo "🔏 Signing with developer certificate (hardened runtime)..."
 codesign --force --sign "$SIGNING_IDENTITY" \
   --options runtime \
+  --entitlements Resources/ScreenRecorder.entitlements \
   --deep \
   --generate-entitlement-der \
   "$APP_DIR" 2>&1

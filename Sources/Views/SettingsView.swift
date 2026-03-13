@@ -1,4 +1,5 @@
 import SwiftUI
+import KeyboardShortcuts
 
 /// Settings / Preferences view.
 struct SettingsView: View {
@@ -75,13 +76,19 @@ struct SettingsView: View {
                         }
                     }
 
-                    // Hotkeys
-                    settingsSection(title: "Global Hotkeys", icon: "keyboard") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            hotkeyRow(action: "Start/Stop Recording", shortcut: "⌘⇧R")
-                            hotkeyRow(action: "Toggle Keystrokes", shortcut: "⌘⇧K")
-                            hotkeyRow(action: "Toggle Camera", shortcut: "⌘⇧C")
-                            hotkeyRow(action: "Show/Hide Bar", shortcut: "⌘⇧H")
+                    // Keyboard Shortcuts (user-customizable)
+                    settingsSection(title: "Keyboard Shortcuts", icon: "keyboard") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(KeyboardShortcuts.Name.allCases, id: \.rawValue) { name in
+                                HStack {
+                                    Text(name.label)
+                                        .font(.system(size: 13))
+                                        .frame(width: 180, alignment: .leading)
+                                    Spacer()
+                                    KeyboardShortcuts.Recorder(for: name)
+                                        .frame(width: 160)
+                                }
+                            }
                         }
                     }
 
@@ -98,7 +105,7 @@ struct SettingsView: View {
                 .padding(24)
             }
         }
-        .frame(width: 420, height: 560)
+        .frame(width: 460, height: 640)
         .background(.ultraThickMaterial)
     }
 
@@ -116,22 +123,6 @@ struct SettingsView: View {
             }
 
             content()
-        }
-    }
-
-    // MARK: - Hotkey Row
-
-    private func hotkeyRow(action: String, shortcut: String) -> some View {
-        HStack {
-            Text(action)
-                .font(.system(size: 13))
-            Spacer()
-            Text(shortcut)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Color.secondary.opacity(0.15))
-                .cornerRadius(4)
         }
     }
 

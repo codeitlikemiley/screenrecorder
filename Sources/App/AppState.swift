@@ -151,22 +151,18 @@ class AppState: ObservableObject {
     func adjustMicVolume(by delta: Int) {
         micVolume = max(0, min(10, micVolume + delta))
         isMicMuted = (micVolume == 0)
-
-        // Show HUD
-        showVolumeOverlay = true
-        volumeOverlayWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            self?.showVolumeOverlay = false
-        }
-        volumeOverlayWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+        flashVolumeHUD()
     }
 
     /// Reset mic volume to default (5)
     func resetMicVolume() {
         micVolume = 5
         isMicMuted = false
+        flashVolumeHUD()
+    }
 
+    /// Show volume HUD briefly, auto-hide after 1.5s
+    private func flashVolumeHUD() {
         showVolumeOverlay = true
         volumeOverlayWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -258,15 +254,9 @@ class AppState: ObservableObject {
         } else {
             // New key — append with separator
             let separator = keystrokeDisplayText.isEmpty ? "" : "  "
-            let segment: String
-            if event.modifiers.isEmpty && !event.isSpecialKey {
-                segment = display
-            } else {
-                segment = display
-            }
-            keystrokeDisplayText += separator + segment
+            keystrokeDisplayText += separator + display
             lastKeystrokeString = display
-            lastRenderedSegment = segment
+            lastRenderedSegment = display
             keystrokeRepeatCount = 1
         }
 
