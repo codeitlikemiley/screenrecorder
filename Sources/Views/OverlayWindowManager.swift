@@ -47,6 +47,23 @@ class OverlayWindowManager {
             }
             .store(in: &cancellables)
 
+        // Auto-hide camera when Presenter Overlay (or another app) steals the camera
+        cameraManager.$isInterrupted
+            .receive(on: RunLoop.main)
+            .sink { [weak self] interrupted in
+                guard let self = self else { return }
+                if interrupted {
+                    // Presenter Overlay is active — hide our camera preview
+                    self.cameraWindow?.orderOut(nil)
+                    print("📷 Camera preview hidden (Presenter Overlay active)")
+                } else if self.appState?.isCameraEnabled == true && self.cameraManager?.isRunning == true {
+                    // Presenter Overlay deactivated — restore our camera preview
+                    self.showCamera()
+                    print("📷 Camera preview restored")
+                }
+            }
+            .store(in: &cancellables)
+
         // Observe mic volume changes to show HUD
         appState.$showVolumeOverlay
             .receive(on: RunLoop.main)

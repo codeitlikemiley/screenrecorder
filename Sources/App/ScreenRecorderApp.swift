@@ -66,12 +66,6 @@ struct MenuBarView: View {
                     Text("Starting in \(appState.countdownValue)...")
                 }
             } else if appState.isRecording {
-                HStack {
-                    Circle()
-                        .fill(.red)
-                        .frame(width: 8, height: 8)
-                    Text("Recording — \(appState.formattedDuration)")
-                }
 
                 Button("⏹ Stop Recording  ⌘⇧S") {
                     Task { await coordinator.stopRecording() }

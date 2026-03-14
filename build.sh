@@ -1,8 +1,13 @@
 #!/bin/bash
 set -e
 
-SIGNING_IDENTITY="Apple Development: Uriah Galang (SLT9H2M79A)"
-TEAM_ID="5KZ8MD34QW"
+# Load environment variables
+if [ -f .env ]; then
+    set -a; source .env; set +a
+fi
+
+SIGNING_IDENTITY="${SIGNING_IDENTITY:?Set SIGNING_IDENTITY in .env}"
+TEAM_ID="${APPLE_TEAM_ID:?Set APPLE_TEAM_ID in .env}"
 APP_DIR=".build/ScreenRecorder.app"
 
 # Kill existing instance to prevent -600 error on relaunch
@@ -66,7 +71,7 @@ spctl --add --label "ScreenRecorder" "$APP_DIR" 2>/dev/null || true
 # Reset stale Accessibility permission (CDHash changes on each rebuild)
 # This clears the old entry so the new binary gets a fresh permission grant
 echo "🔑 Resetting Accessibility permission for fresh CDHash..."
-tccutil reset Accessibility com.screenrecorder.app 2>/dev/null || true
+tccutil reset Accessibility com.codeitlikemiley.screenrecorder 2>/dev/null || true
 
 echo ""
 echo "✅ Done! Run:  open $APP_DIR"

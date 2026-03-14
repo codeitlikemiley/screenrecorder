@@ -1,0 +1,167 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v1.0.0
+
+env:
+  APP_NAME: ScreenRecorder
+  BUNDLE_ID: com.codeitlikemiley.screenrecorder
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+    permissions:
+      contents: write  # Needed for creating releases
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Update version in Info.plist
+        run: |
+          sed -i '' "s|<string>1.0.0</string>|<string>${{ steps.version.outputs.VERSION }}</string>|g" Resources/Info.plist
+
+      - name: Install Apple certificate
+        env:
+          CERTIFICATE_P12: ${{ secrets.CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          echo -n "$CERTIFICATE_P12" | base64 --decode -o "$CERTIFICATE_PATH"
+          security import "$CERTIFICATE_PATH" -P "$CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+
+          # Allow codesign to access the keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Set as default and add to search list
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+          # Verify the identity is available
+          echo "Available signing identities:"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Build release binary
+        run: |
+          xcodebuild -scheme "$APP_NAME" -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath .build/xcode-release \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | grep -E '(error:|warning:|BUILD|Signing)' || true
+
+          if [ ! -f ".build/xcode-release/Build/Products/Release/$APP_NAME" ]; then
+            echo "❌ Build failed"
+            exit 1
+          fi
+
+      - name: Package .app bundle
+        run: |
+          APP_DIR=".build/release/${APP_NAME}.app"
+          CONTENTS_DIR="${APP_DIR}/Contents"
+          MACOS_DIR="${CONTENTS_DIR}/MacOS"
+          RESOURCES_DIR="${CONTENTS_DIR}/Resources"
+
+          mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
+          cp ".build/xcode-release/Build/Products/Release/${APP_NAME}" "${MACOS_DIR}/${APP_NAME}"
+          cp Resources/Info.plist "${CONTENTS_DIR}/Info.plist"
+
+          [ -f "Resources/AppIcon.icns" ] && cp Resources/AppIcon.icns "${RESOURCES_DIR}/AppIcon.icns"
+
+          # Copy SPM resource bundles
+          for bundle in .build/xcode-release/Build/Products/Release/*.bundle; do
+            [ -d "$bundle" ] && cp -R "$bundle" "${RESOURCES_DIR}/"
+          done
+
+      - name: Code sign
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          # Get the SHA-1 hash of the signing identity from the keychain
+          IDENTITY_HASH=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep "Developer ID" | head -1 | awk '{print $2}')
+
+          if [ -z "$IDENTITY_HASH" ]; then
+            echo "❌ No Developer ID identity found in keychain"
+            exit 1
+          fi
+          echo "Signing with identity: $IDENTITY_HASH"
+
+          codesign --force --sign "$IDENTITY_HASH" \
+            --options runtime \
+            --entitlements Resources/ScreenRecorder.entitlements \
+            --deep --timestamp --generate-entitlement-der \
+            ".build/release/${APP_NAME}.app"
+
+          codesign --verify --verbose=2 ".build/release/${APP_NAME}.app"
+
+      - name: Notarize
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent ".build/release/${APP_NAME}.app" ".build/${APP_NAME}.zip"
+
+          xcrun notarytool submit ".build/${APP_NAME}.zip" \
+            --apple-id "${APPLE_ID}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --password "${APP_PASSWORD}" \
+            --wait
+
+          xcrun stapler staple ".build/release/${APP_NAME}.app"
+
+      - name: Create DMG
+        run: |
+          brew install create-dmg || true
+
+          DMG_NAME="${APP_NAME}-${{ steps.version.outputs.VERSION }}.dmg"
+          DMG_STAGING=".build/dmg-staging"
+          mkdir -p "${DMG_STAGING}"
+          cp -R ".build/release/${APP_NAME}.app" "${DMG_STAGING}/"
+
+          create-dmg \
+            --volname "Screen Recorder" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "${APP_NAME}.app" 150 190 \
+            --app-drop-link 450 190 \
+            --no-internet-enable \
+            ".build/${DMG_NAME}" \
+            "${DMG_STAGING}" || true
+
+          rm -rf "${DMG_STAGING}"
+          echo "DMG_NAME=${DMG_NAME}" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Screen Recorder v${{ steps.version.outputs.VERSION }}"
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            .build/${{ env.DMG_NAME }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup keychain
+        if: always()
+        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true

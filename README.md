@@ -1,10 +1,13 @@
-# 🍌 Nano Banana — Screen Recorder
+# Screen Recorder
+
 
 A native macOS screen recorder designed for developers. Record your screen, camera, and microphone with global hotkeys — built to eventually generate visual artifacts for AI-assisted debugging.
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue)
 ![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
+[![Release](https://github.com/codeitlikemiley/screenrecorder/actions/workflows/release.yml/badge.svg)](https://github.com/codeitlikemiley/screenrecorder/actions/workflows/release.yml)
+
 
 ## Features
 
@@ -119,6 +122,30 @@ Sources/
 ## Dependencies
 
 - [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) — User-customizable global keyboard shortcuts with built-in SwiftUI recorder, auto-persistence, and conflict detection
+
+## Release
+
+```bash
+# 1. Set up credentials (one-time)
+cp .env.example .env
+# Edit .env with your Apple Developer credentials
+
+# 2. Bump version in .env
+APP_VERSION="1.1.0"
+
+# 3. Build, sign, notarize, create DMG, tag & push
+./release.sh
+```
+
+The release script will:
+1. Stamp the version into `Info.plist`
+2. Build a release binary
+3. Sign with Developer ID (hardened runtime)
+4. Notarize with Apple
+5. Create a DMG
+6. Git tag `v{VERSION}` and force-push to trigger the GitHub Actions release workflow
+
+See [RELEASE.md](RELEASE.md) for full setup instructions.
 
 ## Requirements
 

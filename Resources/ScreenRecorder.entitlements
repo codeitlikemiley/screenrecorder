@@ -11,5 +11,8 @@
     <!-- Screen capture (ScreenCaptureKit) -->
     <key>com.apple.security.screen-capture.allow</key>
     <true/>
+    <!-- Accessibility (CGEvent taps for keystroke monitoring) -->
+    <key>com.apple.security.temporary-exception.apple-events</key>
+    <true/>
 </dict>
 </plist>

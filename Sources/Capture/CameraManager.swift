@@ -9,10 +9,14 @@ class CameraManager: NSObject, ObservableObject {
     private(set) var captureSession: AVCaptureSession?
     private var videoOutput: AVCaptureVideoDataOutput?
     private var videoDelegate: CameraOutputDelegate?
+    private var interruptionObserver: NSObjectProtocol?
+    private var resumeObserver: NSObjectProtocol?
 
     @Published var availableCameras: [AVCaptureDevice] = []
     @Published var selectedCamera: AVCaptureDevice?
     @Published var isRunning = false
+    /// True when another process (e.g. Presenter Overlay) has stolen the camera
+    @Published var isInterrupted = false
 
     var onSampleBuffer: ((CMSampleBuffer) -> Void)?
 
@@ -62,6 +66,29 @@ class CameraManager: NSObject, ObservableObject {
         videoOutput = output
         videoDelegate = delegate
 
+        // Listen for session interruptions (Presenter Overlay, other apps stealing camera)
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: .AVCaptureSessionWasInterrupted,
+            object: session,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                print("📷 Camera interrupted (Presenter Overlay or other app took camera)")
+                self?.isInterrupted = true
+            }
+        }
+
+        resumeObserver = NotificationCenter.default.addObserver(
+            forName: .AVCaptureSessionInterruptionEnded,
+            object: session,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                print("📷 Camera resumed")
+                self?.isInterrupted = false
+            }
+        }
+
         let captureSession = session
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             captureSession.startRunning()
@@ -74,11 +101,20 @@ class CameraManager: NSObject, ObservableObject {
     // MARK: - Stop Camera
 
     func stopCamera() {
+        if let observer = interruptionObserver {
+            NotificationCenter.default.removeObserver(observer)
+            interruptionObserver = nil
+        }
+        if let observer = resumeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            resumeObserver = nil
+        }
         captureSession?.stopRunning()
         captureSession = nil
         videoOutput = nil
         videoDelegate = nil
         isRunning = false
+        isInterrupted = false
     }
 
     // MARK: - Get Preview Layer

@@ -1,5 +1,6 @@
 # Build artifacts
 .build/
+build/
 .swiftpm/
 
 # Xcode
@@ -26,3 +27,9 @@ DerivedData/
 
 # Learnings (local research notes)
 learnings/
+
+# Environment (secrets)
+.env
+
+# Stow directory (managed separately)
+.stow/
