@@ -11,6 +11,7 @@ extension KeyboardShortcuts.Name {
     static let toggleControlBar = Self("toggleControlBar", default: .init(.h, modifiers: [.command, .shift]))
     static let openSettings = Self("openSettings", default: .init(.comma, modifiers: [.command]))
     static let openRecordings = Self("openRecordings", default: .init(.f, modifiers: [.command, .shift]))
+    static let openLibrary = Self("openLibrary", default: .init(.l, modifiers: [.command, .shift]))
     static let volumeUp = Self("volumeUp", default: .init(.equal, modifiers: [.command, .shift]))
     static let volumeDown = Self("volumeDown", default: .init(.minus, modifiers: [.command, .shift]))
     static let volumeReset = Self("volumeReset", default: .init(.zero, modifiers: [.command, .shift]))
@@ -26,6 +27,7 @@ extension KeyboardShortcuts.Name: @retroactive CaseIterable {
         .toggleControlBar,
         .openSettings,
         .openRecordings,
+        .openLibrary,
         .volumeUp,
         .volumeDown,
         .volumeReset,
@@ -42,6 +44,7 @@ extension KeyboardShortcuts.Name {
         "toggleControlBar": "Show / Hide Control Bar",
         "openSettings": "Settings",
         "openRecordings": "Open Recordings",
+        "openLibrary": "Recording Library",
         "volumeUp": "Mic Volume Up",
         "volumeDown": "Mic Volume Down",
         "volumeReset": "Reset Mic Volume",

@@ -204,6 +204,79 @@ class PostRecordingProcessor: ObservableObject {
         return session
     }
 
+    // MARK: - Re-process
+
+    /// Re-process an existing recording with the current AI provider.
+    /// Reuses existing frames (skips extraction), re-runs AI, saves updated workflow.
+    func reprocess(videoURL: URL, baseDirectory: URL) async {
+        isProcessing = true
+        progress = 0
+
+        let baseName = videoURL.deletingPathExtension().lastPathComponent
+
+        // Load existing session
+        let sessionURL = baseDirectory.appendingPathComponent("\(baseName)_session.json")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        guard let sessionData = try? Data(contentsOf: sessionURL),
+              var session = try? decoder.decode(RecordingSession.self, from: sessionData) else {
+            print("⚠️ Cannot re-process: no session file found for \(baseName)")
+            // If no session exists, fall through to full process
+            _ = await process(videoURL: videoURL, metadataURL: nil, duration: 0)
+            return
+        }
+
+        print("🔄 Re-processing: \(baseName)")
+
+        // Use existing frames directory
+        let framesDir = baseDirectory
+            .appendingPathComponent(session.framesDirectory ?? "\(baseName)_frames", isDirectory: true)
+
+        updateStage(.generatingSteps, progress: 0.2)
+
+        // Re-run AI with current active provider
+        let aiManager = AIProviderManager.shared
+        guard aiManager.isAIEnabled, let aiService = aiManager.makeService() else {
+            print("⚠️ Re-process failed: no AI provider configured")
+            updateStage(.failed, progress: 0)
+            isProcessing = false
+            return
+        }
+
+        let generator = StepGenerator(aiService: aiService)
+
+        do {
+            let workflow = try await generator.generate(from: session, framesDirectory: framesDir)
+            lastWorkflow = workflow
+
+            // Save updated workflow JSON (overwrites previous)
+            let _ = try workflow.save(in: baseDirectory, baseName: baseName)
+
+            updateStage(.generatingSteps, progress: 0.9)
+            print("  🧠 Re-generated \(workflow.steps.count) steps: \"\(workflow.title)\"")
+
+            // Update session processing state
+            session.processingState = .completed
+            let _ = try session.save(in: baseDirectory)
+
+        } catch {
+            print("  ⚠️ AI re-processing failed: \(error.localizedDescription)")
+            session.processingState = .failed
+            let _ = try? session.save(in: baseDirectory)
+        }
+
+        updateStage(.complete, progress: 1.0)
+        isProcessing = false
+
+        // Open the session viewer with the updated data
+        SessionViewerWindowManager.shared.open(
+            session: session,
+            workflow: lastWorkflow,
+            baseDirectory: baseDirectory
+        )
+    }
+
     // MARK: - Private
 
     private func updateStage(_ stage: Stage, progress: Double) {

@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Settings sub-view for managing AI providers, API keys, and model selection.
-/// Embedded inside the main SettingsView.
+/// Settings sub-view for managing AI provider profiles.
+/// Every provider is fully configurable: base URL, model, max tokens, temperature.
 struct AIProviderSettingsView: View {
     @ObservedObject var manager: AIProviderManager
     @State private var expandedProviderId: String?
@@ -90,10 +90,19 @@ struct AIProviderSettingsView: View {
 
                 Spacer()
 
-                // Model badge
-                Text(provider.selectedModel)
-                    .font(.system(size: 10, design: .monospaced))
+                // Protocol badge
+                Text(provider.providerType.displayName)
+                    .font(.system(size: 9))
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(3)
+
+                // Model badge
+                Text(provider.selectedModel.isEmpty ? "No model" : provider.selectedModel)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(provider.selectedModel.isEmpty ? .red.opacity(0.7) : .secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Color(nsColor: .controlBackgroundColor))
@@ -141,7 +150,7 @@ struct AIProviderSettingsView: View {
         }
     }
 
-    // MARK: - Provider Detail
+    // MARK: - Provider Detail (Full Profile)
 
     private func providerDetail(_ provider: ProviderConfig) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -152,31 +161,29 @@ struct AIProviderSettingsView: View {
                 Text("Name")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                    .frame(width: 60, alignment: .trailing)
+                    .frame(width: 75, alignment: .trailing)
                 TextField("Provider name", text: bindingForName(provider))
                     .font(.system(size: 12))
                     .textFieldStyle(.roundedBorder)
             }
 
-            // Base URL (editable for openaiCompatible)
-            if provider.providerType == .openaiCompatible {
-                HStack {
-                    Text("Base URL")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 60, alignment: .trailing)
-                    TextField("https://api.example.com/v1", text: bindingForBaseURL(provider))
-                        .font(.system(size: 11, design: .monospaced))
-                        .textFieldStyle(.roundedBorder)
-                }
+            // Base URL — always editable
+            HStack {
+                Text("Base URL")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 75, alignment: .trailing)
+                TextField("https://api.example.com/v1", text: bindingForBaseURL(provider))
+                    .font(.system(size: 11, design: .monospaced))
+                    .textFieldStyle(.roundedBorder)
             }
 
-            // Model picker
+            // Model — picker + free-text add
             HStack {
                 Text("Model")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                    .frame(width: 60, alignment: .trailing)
+                    .frame(width: 75, alignment: .trailing)
 
                 if provider.availableModels.isEmpty {
                     TextField("Model name", text: bindingForModel(provider))
@@ -191,23 +198,49 @@ struct AIProviderSettingsView: View {
                     .labelsHidden()
                 }
 
-                // Add model button for compatible providers
-                if provider.providerType == .openaiCompatible {
-                    Button {
-                        editingModelsForProvider = provider.id
-                        newModelName = ""
-                    } label: {
-                        Image(systemName: "plus.circle")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.plain)
-                    .popover(isPresented: Binding(
-                        get: { editingModelsForProvider == provider.id },
-                        set: { if !$0 { editingModelsForProvider = nil } }
-                    )) {
-                        addModelPopover(provider)
-                    }
+                // Add model button — always available
+                Button {
+                    editingModelsForProvider = provider.id
+                    newModelName = ""
+                } label: {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 11))
                 }
+                .buttonStyle(.plain)
+                .popover(isPresented: Binding(
+                    get: { editingModelsForProvider == provider.id },
+                    set: { if !$0 { editingModelsForProvider = nil } }
+                )) {
+                    addModelPopover(provider)
+                }
+            }
+
+            // Max Tokens
+            HStack {
+                Text("Max Tokens")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 75, alignment: .trailing)
+                TextField("4096", value: bindingForMaxTokens(provider), format: .number)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 80)
+                Spacer()
+            }
+
+            // Temperature
+            HStack {
+                Text("Temperature")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 75, alignment: .trailing)
+                TextField("0.3", value: bindingForTemperature(provider), format: .number.precision(.fractionLength(1)))
+                    .font(.system(size: 12, design: .monospaced))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 60)
+                Slider(value: bindingForTemperature(provider), in: 0...2, step: 0.1)
+                    .frame(width: 100)
+                Spacer()
             }
 
             // API Keys
@@ -270,13 +303,13 @@ struct AIProviderSettingsView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    .padding(.leading, 60)
+                    .padding(.leading, 75)
                 }
 
                 // Add key form (inline)
                 if editingKeyForProvider == provider.id {
                     addKeyForm(provider)
-                        .padding(.leading, 60)
+                        .padding(.leading, 75)
                 }
             }
 
@@ -362,36 +395,60 @@ struct AIProviderSettingsView: View {
 
     private var addProviderMenu: some View {
         Menu {
-            Section("Native Providers") {
-                ForEach(ProviderPreset.builtIn.filter { $0.providerType != .openaiCompatible }) { preset in
+            Section("OpenAI Protocol") {
+                ForEach(ProviderPreset.builtIn.filter { $0.providerType == .openai }) { preset in
                     Button {
                         addFromPreset(preset)
                     } label: {
-                        Label(preset.name, systemImage: preset.providerType.icon)
+                        Label(preset.name, systemImage: "brain.head.profile")
+                    }
+                }
+            }
+
+            Section("Anthropic Protocol") {
+                ForEach(ProviderPreset.builtIn.filter { $0.providerType == .anthropic }) { preset in
+                    Button {
+                        addFromPreset(preset)
+                    } label: {
+                        Label(preset.name, systemImage: "sparkles")
+                    }
+                }
+            }
+
+            Section("Gemini Protocol") {
+                ForEach(ProviderPreset.builtIn.filter { $0.providerType == .gemini }) { preset in
+                    Button {
+                        addFromPreset(preset)
+                    } label: {
+                        Label(preset.name, systemImage: "diamond")
                     }
                 }
             }
 
             Divider()
 
-            Section("OpenAI Compatible") {
-                ForEach(ProviderPreset.builtIn.filter { $0.providerType == .openaiCompatible }) { preset in
-                    Button {
-                        addFromPreset(preset)
-                    } label: {
-                        Label(preset.name, systemImage: "network")
-                    }
+            Menu("Custom Provider") {
+                Button {
+                    let custom = ProviderConfig.blank(type: .openai)
+                    manager.addProvider(custom)
+                    expandedProviderId = custom.id
+                } label: {
+                    Label("OpenAI Protocol", systemImage: "brain.head.profile")
                 }
-            }
-
-            Divider()
-
-            Button {
-                let custom = ProviderConfig.custom(name: "Custom Provider", baseURL: "", models: [])
-                manager.addProvider(custom)
-                expandedProviderId = custom.id
-            } label: {
-                Label("Custom (OpenAI Compatible)", systemImage: "plus.circle")
+                Button {
+                    let custom = ProviderConfig.blank(type: .anthropic)
+                    manager.addProvider(custom)
+                    expandedProviderId = custom.id
+                } label: {
+                    Label("Anthropic Protocol", systemImage: "sparkles")
+                }
+                Button {
+                    let custom = ProviderConfig.blank(type: .gemini)
+                    manager.addProvider(custom)
+                    expandedProviderId = custom.id
+                } label: {
+                    Label("Gemini Protocol", systemImage: "diamond")
+                }
             }
         } label: {
             HStack(spacing: 4) {
@@ -434,6 +491,20 @@ struct AIProviderSettingsView: View {
         Binding(
             get: { provider.selectedModel },
             set: { var p = provider; p.selectedModel = $0; manager.updateProvider(p) }
+        )
+    }
+
+    private func bindingForMaxTokens(_ provider: ProviderConfig) -> Binding<Int> {
+        Binding(
+            get: { provider.maxTokens },
+            set: { var p = provider; p.maxTokens = $0; manager.updateProvider(p) }
+        )
+    }
+
+    private func bindingForTemperature(_ provider: ProviderConfig) -> Binding<Double> {
+        Binding(
+            get: { provider.temperature },
+            set: { var p = provider; p.temperature = $0; manager.updateProvider(p) }
         )
     }
 }

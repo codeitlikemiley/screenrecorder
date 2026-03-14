@@ -65,6 +65,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let dir = appState?.saveDirectory else { return }
             NSWorkspace.shared.open(dir)
         }
+        manager.onOpenLibrary = { [weak appState] in
+            guard let dir = appState?.saveDirectory else { return }
+            LibraryWindowManager.shared.open(directory: dir)
+        }
 
         manager.registerHotkeys()
         hotkeyManager = manager

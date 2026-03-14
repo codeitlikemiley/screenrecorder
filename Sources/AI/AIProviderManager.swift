@@ -56,24 +56,32 @@ class AIProviderManager: ObservableObject {
         guard let apiKey = loadAPIKey(for: provider) else { return nil }
 
         switch provider.providerType {
-        case .openai, .openaiCompatible:
+        case .openai:
             return OpenAIProvider(
                 apiKey: apiKey,
                 baseURL: provider.baseURL,
                 defaultModel: provider.selectedModel,
-                name: provider.displayName
+                name: provider.displayName,
+                maxTokens: provider.maxTokens,
+                temperature: provider.temperature
             )
         case .anthropic:
             return AnthropicProvider(
                 apiKey: apiKey,
                 baseURL: provider.baseURL,
-                defaultModel: provider.selectedModel
+                defaultModel: provider.selectedModel,
+                name: provider.displayName,
+                maxTokens: provider.maxTokens,
+                temperature: provider.temperature
             )
         case .gemini:
             return GeminiProvider(
                 apiKey: apiKey,
                 baseURL: provider.baseURL,
-                defaultModel: provider.selectedModel
+                defaultModel: provider.selectedModel,
+                name: provider.displayName,
+                maxTokens: provider.maxTokens,
+                temperature: provider.temperature
             )
         }
     }
@@ -176,6 +184,45 @@ class AIProviderManager: ObservableObject {
 
         do {
             let data = try Data(contentsOf: configFile)
+
+            // Migration: remap old "openaiCompatible" / "anthropicCompatible" provider types
+            // and backfill missing profile fields (maxTokens, temperature)
+            if var jsonObject = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               var jsonProviders = jsonObject["providers"] as? [[String: Any]] {
+                var migrated = false
+                for i in jsonProviders.indices {
+                    if let rawType = jsonProviders[i]["providerType"] as? String {
+                        if rawType == "openaiCompatible" {
+                            jsonProviders[i]["providerType"] = "openai"
+                            migrated = true
+                        } else if rawType == "anthropicCompatible" {
+                            jsonProviders[i]["providerType"] = "anthropic"
+                            migrated = true
+                        }
+                    }
+                    // Backfill missing profile fields
+                    if jsonProviders[i]["maxTokens"] == nil {
+                        jsonProviders[i]["maxTokens"] = 4096
+                        migrated = true
+                    }
+                    if jsonProviders[i]["temperature"] == nil {
+                        jsonProviders[i]["temperature"] = 0.3
+                        migrated = true
+                    }
+                }
+                if migrated {
+                    jsonObject["providers"] = jsonProviders
+                    let migratedData = try JSONSerialization.data(withJSONObject: jsonObject)
+                    let decoded = try JSONDecoder().decode(PersistedConfig.self, from: migratedData)
+                    providers = decoded.providers
+                    activeProviderId = decoded.activeProviderId
+                    isAIEnabled = decoded.isAIEnabled
+                    saveConfig()
+                    print("🔄 Migrated provider config to new profile format")
+                    return
+                }
+            }
+
             let decoded = try JSONDecoder().decode(PersistedConfig.self, from: data)
             providers = decoded.providers
             activeProviderId = decoded.activeProviderId

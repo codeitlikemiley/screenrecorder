@@ -3,7 +3,7 @@ import Foundation
 /// Google Gemini API client implementing the AIService protocol.
 /// Uses the Gemini generateContent REST API.
 ///
-/// Auth: `x-goog-api-key` header (NOT bearer token, NOT URL parameter).
+/// Auth: `x-goog-api-key` header.
 /// Images: `inlineData` with `mimeType` + base64 `data`.
 /// Response: `candidates[].content.parts[].text`.
 ///
@@ -12,33 +12,39 @@ class GeminiProvider: AIService {
     private let apiKey: String
     private let baseURL: String
     private let defaultModel: String
+    private let name: String
+    private let maxTokens: Int
+    private let temperature: Double
 
-    var providerName: String { "Google Gemini" }
+    var providerName: String { name }
     var isConfigured: Bool { !apiKey.isEmpty }
 
-    init(apiKey: String, baseURL: String = "https://generativelanguage.googleapis.com/v1beta", defaultModel: String = "gemini-3-flash-preview") {
+    init(apiKey: String, baseURL: String = "https://generativelanguage.googleapis.com/v1beta",
+         defaultModel: String = "gemini-3-flash-preview", name: String = "Google Gemini",
+         maxTokens: Int = 8192, temperature: Double = 0.3) {
         self.apiKey = apiKey
         self.baseURL = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
         self.defaultModel = defaultModel
+        self.name = name
+        self.maxTokens = maxTokens
+        self.temperature = temperature
     }
 
     // MARK: - AIService
 
-    func complete(prompt: String, images: [Data], model: String?) async throws -> String {
+    func complete(_ request: AIRequest) async throws -> String {
         guard !apiKey.isEmpty else {
-            throw AIError.notConfigured("Google Gemini API key not set.")
+            throw AIError.notConfigured("\(name) API key not set.")
         }
 
-        let selectedModel = model ?? defaultModel
+        let selectedModel = request.model ?? defaultModel
 
-        // Build parts array (Gemini format)
-        var parts: [[String: Any]] = []
+        // Build parts array (Gemini format: text first, then images)
+        var parts: [[String: Any]] = [
+            ["text": request.prompt]
+        ]
 
-        // Add text prompt first
-        parts.append(["text": prompt])
-
-        // Add images as inline data (Gemini supports: PNG, JPEG, WEBP, HEIC, HEIF)
-        for imageData in images {
+        for imageData in request.images {
             let base64 = imageData.base64EncodedString()
             parts.append([
                 "inline_data": [
@@ -50,77 +56,54 @@ class GeminiProvider: AIService {
 
         let body: [String: Any] = [
             "contents": [
-                [
-                    "parts": parts
-                ]
+                ["parts": parts]
             ],
             "generationConfig": [
-                "temperature": 0.3,
-                "maxOutputTokens": 8192
+                "temperature": temperature,
+                "maxOutputTokens": maxTokens
             ]
         ]
 
-        // Gemini uses x-goog-api-key header for authentication
+        // Gemini uses x-goog-api-key header
         let endpoint = "\(baseURL)/models/\(selectedModel):generateContent"
         guard let url = URL(string: endpoint) else {
             throw AIError.networkError("Invalid URL for model: \(selectedModel)")
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        request.timeoutInterval = 120
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+        urlRequest.timeoutInterval = 120
 
-        // Execute request
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // Execute with shared HTTP client
+        let data = try await AIHTTPClient.execute(urlRequest, provider: name)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AIError.networkError("Invalid response")
+        // Decode typed response
+        let response = try JSONDecoder().decode(GeminiResponse.Root.self, from: data)
+
+        // Check for blocked content
+        if let blockReason = response.promptFeedback?.blockReason {
+            throw AIError.apiError(statusCode: 200, message: "Content blocked: \(blockReason)")
         }
 
-        guard httpResponse.statusCode == 200 else {
-            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            if httpResponse.statusCode == 400 && (errorBody.contains("API_KEY") || errorBody.contains("API key")) {
-                throw AIError.notConfigured("Invalid Google Gemini API key")
-            }
-            if httpResponse.statusCode == 403 {
-                throw AIError.notConfigured("Google Gemini API key doesn't have access to model: \(selectedModel)")
-            }
-            if httpResponse.statusCode == 429 {
-                throw AIError.rateLimited
-            }
-            throw AIError.apiError(statusCode: httpResponse.statusCode, message: errorBody)
+        guard let candidates = response.candidates,
+              let firstCandidate = candidates.first else {
+            throw AIError.parseError("Failed to parse \(name) response — no candidates")
         }
 
-        // Parse Gemini response format
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let candidates = json["candidates"] as? [[String: Any]],
-              let firstCandidate = candidates.first,
-              let content = firstCandidate["content"] as? [String: Any],
-              let responseParts = content["parts"] as? [[String: Any]] else {
-            // Check for blocked content
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let promptFeedback = json["promptFeedback"] as? [String: Any],
-               let blockReason = promptFeedback["blockReason"] as? String {
-                throw AIError.apiError(statusCode: 200, message: "Content blocked: \(blockReason)")
-            }
-            throw AIError.parseError("Failed to parse Gemini response")
-        }
-
-        // Extract text from parts
-        let textParts = responseParts.compactMap { $0["text"] as? String }
+        let textParts = firstCandidate.content.parts.compactMap(\.text)
 
         guard !textParts.isEmpty else {
-            throw AIError.parseError("No text content in Gemini response")
+            throw AIError.parseError("No text content in \(name) response")
         }
 
         // Log usage
-        if let usageMetadata = json["usageMetadata"] as? [String: Any] {
-            let promptTokens = usageMetadata["promptTokenCount"] as? Int ?? 0
-            let completionTokens = usageMetadata["candidatesTokenCount"] as? Int ?? 0
-            print("  🤖 Gemini usage: \(promptTokens) prompt + \(completionTokens) completion tokens (\(selectedModel))")
+        if let usage = response.usageMetadata {
+            let promptTokens = usage.promptTokenCount ?? 0
+            let completionTokens = usage.candidatesTokenCount ?? 0
+            print("  🤖 \(name) usage: \(promptTokens) prompt + \(completionTokens) completion tokens (\(selectedModel))")
         }
 
         return textParts.joined(separator: "\n")

@@ -1,44 +1,21 @@
 import Foundation
 
-// MARK: - Provider Type
+// MARK: - Provider Type (API Protocol)
 
-/// The type of AI provider backend.
+/// The API protocol used to communicate with the AI provider.
+/// This is NOT the vendor — it's the wire format. MiniMax can be `.openai` or `.anthropic`.
 enum ProviderType: String, Codable, CaseIterable, Identifiable {
-    case openai
-    case anthropic
-    case gemini
-    case openaiCompatible
+    case openai      // OpenAI chat/completions format (Bearer auth)
+    case anthropic   // Anthropic messages format (x-api-key auth)
+    case gemini      // Google Gemini generateContent format (x-goog-api-key auth)
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .openai: return "OpenAI"
-        case .anthropic: return "Anthropic"
-        case .gemini: return "Google Gemini"
-        case .openaiCompatible: return "OpenAI Compatible"
-        }
-    }
-
-    var defaultBaseURL: String {
-        switch self {
-        case .openai: return "https://api.openai.com/v1"
-        case .anthropic: return "https://api.anthropic.com/v1"
-        case .gemini: return "https://generativelanguage.googleapis.com/v1beta"
-        case .openaiCompatible: return ""
-        }
-    }
-
-    var defaultModels: [String] {
-        switch self {
-        case .openai:
-            return ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "o4-mini"]
-        case .anthropic:
-            return ["claude-sonnet-4-20250514", "claude-haiku-3.5-20241022", "claude-opus-4-20250514"]
-        case .gemini:
-            return ["gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview", "gemini-2.5-flash", "gemini-2.5-pro"]
-        case .openaiCompatible:
-            return []
+        case .openai: return "OpenAI Protocol"
+        case .anthropic: return "Anthropic Protocol"
+        case .gemini: return "Gemini Protocol"
         }
     }
 
@@ -47,65 +24,96 @@ enum ProviderType: String, Codable, CaseIterable, Identifiable {
         case .openai: return "brain.head.profile"
         case .anthropic: return "sparkles"
         case .gemini: return "diamond"
-        case .openaiCompatible: return "network"
         }
     }
 }
 
 // MARK: - Provider Preset
 
-/// Quick-add presets for OpenAI-compatible providers.
+/// Quick-start templates that pre-fill a profile. Users can edit everything after.
 struct ProviderPreset: Identifiable {
     let id: String
     let name: String
     let baseURL: String
     let models: [String]
     let providerType: ProviderType
+    let defaultMaxTokens: Int
+    let defaultTemperature: Double
+
+    init(id: String, name: String, baseURL: String, models: [String], providerType: ProviderType,
+         maxTokens: Int = 4096, temperature: Double = 0.3) {
+        self.id = id
+        self.name = name
+        self.baseURL = baseURL
+        self.models = models
+        self.providerType = providerType
+        self.defaultMaxTokens = maxTokens
+        self.defaultTemperature = temperature
+    }
 
     static let builtIn: [ProviderPreset] = [
-        // Native providers
+        // ── OpenAI Protocol ─────────────────────────────────────────
         ProviderPreset(
             id: "openai", name: "OpenAI",
             baseURL: "https://api.openai.com/v1",
-            models: ProviderType.openai.defaultModels,
+            models: ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "o4-mini"],
             providerType: .openai
         ),
-        ProviderPreset(
-            id: "anthropic", name: "Anthropic",
-            baseURL: "https://api.anthropic.com/v1",
-            models: ProviderType.anthropic.defaultModels,
-            providerType: .anthropic
-        ),
-        ProviderPreset(
-            id: "gemini", name: "Google Gemini",
-            baseURL: "https://generativelanguage.googleapis.com/v1beta",
-            models: ProviderType.gemini.defaultModels,
-            providerType: .gemini
-        ),
-        // OpenAI-compatible presets
         ProviderPreset(
             id: "qwen", name: "Alibaba Qwen",
             baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
             models: ["qwen3.5-plus", "qwen3-max", "qwen3-coder-plus", "qwen3-coder-next"],
-            providerType: .openaiCompatible
+            providerType: .openai
         ),
         ProviderPreset(
             id: "deepseek", name: "DeepSeek",
             baseURL: "https://api.deepseek.com/v1",
             models: ["deepseek-chat", "deepseek-reasoner"],
-            providerType: .openaiCompatible
+            providerType: .openai
         ),
         ProviderPreset(
-            id: "minimax", name: "MiniMax",
+            id: "minimax-openai", name: "MiniMax",
             baseURL: "https://api.minimax.chat/v1",
-            models: ["MiniMax-M2.5"],
-            providerType: .openaiCompatible
+            models: ["MiniMax-M2.5", "MiniMax-M2.5-highspeed"],
+            providerType: .openai
+        ),
+        ProviderPreset(
+            id: "moonshot-openai", name: "Moonshot AI (Kimi)",
+            baseURL: "https://api.moonshot.ai/v1",
+            models: ["kimi-k2.5", "kimi-k2-0905-preview", "kimi-k2-thinking"],
+            providerType: .openai
         ),
         ProviderPreset(
             id: "glm", name: "GLM / Zhipu",
             baseURL: "https://open.bigmodel.cn/api/paas/v4",
             models: ["glm-5", "glm-4-plus"],
-            providerType: .openaiCompatible
+            providerType: .openai
+        ),
+        // ── Anthropic Protocol ──────────────────────────────────────
+        ProviderPreset(
+            id: "anthropic", name: "Anthropic",
+            baseURL: "https://api.anthropic.com/v1",
+            models: ["claude-sonnet-4-20250514", "claude-haiku-3.5-20241022", "claude-opus-4-20250514"],
+            providerType: .anthropic
+        ),
+        ProviderPreset(
+            id: "minimax-anthropic", name: "MiniMax",
+            baseURL: "https://api.minimax.io/anthropic",
+            models: ["MiniMax-M2.5", "MiniMax-M2.5-highspeed"],
+            providerType: .anthropic
+        ),
+        ProviderPreset(
+            id: "moonshot-anthropic", name: "Moonshot AI (Kimi)",
+            baseURL: "https://api.moonshot.ai/anthropic",
+            models: ["kimi-k2.5", "kimi-k2-0905-preview", "kimi-k2-thinking"],
+            providerType: .anthropic
+        ),
+        // ── Gemini Protocol ─────────────────────────────────────────
+        ProviderPreset(
+            id: "gemini", name: "Google Gemini",
+            baseURL: "https://generativelanguage.googleapis.com/v1beta",
+            models: ["gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview", "gemini-2.5-flash", "gemini-2.5-pro"],
+            providerType: .gemini, maxTokens: 8192
         ),
     ]
 }
@@ -127,9 +135,10 @@ struct APIKeyEntry: Codable, Identifiable {
     }
 }
 
-// MARK: - Provider Config
+// MARK: - Provider Config (Profile)
 
-/// Configuration for a single AI provider instance.
+/// A fully user-configurable AI provider profile.
+/// Presets pre-fill these values; the user can change everything.
 struct ProviderConfig: Codable, Identifiable {
     let id: String
     var providerType: ProviderType
@@ -140,8 +149,10 @@ struct ProviderConfig: Codable, Identifiable {
     var selectedModel: String
     var availableModels: [String]
     var isEnabled: Bool
+    var maxTokens: Int
+    var temperature: Double
 
-    /// Create a new provider from a preset.
+    /// Create a profile from a preset (user can edit everything after).
     static func from(preset: ProviderPreset) -> ProviderConfig {
         ProviderConfig(
             id: UUID().uuidString,
@@ -152,22 +163,26 @@ struct ProviderConfig: Codable, Identifiable {
             activeKeyIndex: 0,
             selectedModel: preset.models.first ?? "",
             availableModels: preset.models,
-            isEnabled: true
+            isEnabled: true,
+            maxTokens: preset.defaultMaxTokens,
+            temperature: preset.defaultTemperature
         )
     }
 
-    /// Create a custom OpenAI-compatible provider.
-    static func custom(name: String, baseURL: String, models: [String]) -> ProviderConfig {
+    /// Create a blank profile for a given API protocol.
+    static func blank(type: ProviderType) -> ProviderConfig {
         ProviderConfig(
             id: UUID().uuidString,
-            providerType: .openaiCompatible,
-            displayName: name,
-            baseURL: baseURL,
+            providerType: type,
+            displayName: "Custom Provider",
+            baseURL: "",
             apiKeys: [],
             activeKeyIndex: 0,
-            selectedModel: models.first ?? "",
-            availableModels: models,
-            isEnabled: true
+            selectedModel: "",
+            availableModels: [],
+            isEnabled: true,
+            maxTokens: 4096,
+            temperature: 0.3
         )
     }
 

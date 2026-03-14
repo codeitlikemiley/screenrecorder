@@ -149,6 +149,10 @@ struct MenuBarView: View {
                 NSWorkspace.shared.open(appState.saveDirectory)
             }
 
+            Button("📚 Recording Library  ⌘⇧L") {
+                LibraryWindowManager.shared.open(directory: appState.saveDirectory)
+            }
+
             SettingsLink {
                 Text("⚙️ Settings...  ⌘,")
             }

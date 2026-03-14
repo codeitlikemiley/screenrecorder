@@ -1,155 +1,158 @@
 # Screen Recorder
 
-
-A native macOS screen recorder designed for developers. Record your screen, camera, and microphone with global hotkeys — built to eventually generate visual artifacts for AI-assisted debugging.
+A native macOS screen recorder designed for developers. Record your screen, camera, and microphone with global hotkeys — then let AI generate step-by-step workflow documentation from your recordings.
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue)
 ![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 [![Release](https://github.com/codeitlikemiley/screenrecorder/actions/workflows/release.yml/badge.svg)](https://github.com/codeitlikemiley/screenrecorder/actions/workflows/release.yml)
 
-
 ## Features
 
 - **Screen Recording** — Native retina resolution via ScreenCaptureKit
-- **Camera Overlay** — Circular, draggable webcam preview (composited into the recording)
-- **Microphone + System Audio** — Voice + system audio with adjustable mic volume (0–10 scale)
+- **Camera Overlay** — Circular, draggable webcam preview composited into the recording
+- **Microphone + System Audio** — Voice and system audio with adjustable mic volume
 - **Keystroke Overlay** — Floating key display with coalescing and repeat counts
-- **Noise Suppression** — macOS Voice Isolation for clean audio in noisy environments
-- **Global Hotkeys** — Control everything from any app, even in the background
+- **Noise Suppression** — macOS Voice Isolation for clean audio
+- **Global Hotkeys** — Fully customizable, works from any app
 - **HEVC (H.265)** — ~50% smaller files than H.264
-- **Persistent Settings** — All preferences saved via UserDefaults across restarts
+- **AI Step Generation** — Analyze recordings with OpenAI, Anthropic, Gemini, or any compatible API
+- **Recording Library** — Browse, re-process, and manage all past recordings
 - **Menu Bar App** — Lives in the menu bar, no dock icon
 
-## Global Hotkeys
+## Install
 
-| Shortcut | Action |
-|----------|--------|
-| `⌘⇧S` | Start / Stop recording |
-| `⌘⇧C` | Toggle camera (enable/disable or show/hide during recording) |
-| `⌘⇧M` | Toggle microphone (enable/disable or mute/unmute during recording) |
-| `⌘⇧K` | Toggle keystroke overlay |
-| `⌘⇧H` | Show / Hide control bar |
-| `⌘⇧+` | Increase mic volume |
-| `⌘⇧-` | Decrease mic volume |
-| `⌘⇧0` | Reset mic volume to default |
-| `⌘⇧F` | Open recordings folder |
-| `⌘,` | Open settings |
+### Download (Recommended)
 
-## Default Configuration
+1. Download the latest DMG from [**Releases**](https://github.com/codeitlikemiley/screenrecorder/releases/latest):
 
-| Setting | Default |
-|---------|---------|
-| Video Codec | HEVC (H.265) |
-| Container | `.mov` |
-| Frame Rate | 30 FPS |
-| Resolution | Native retina |
-| Camera | Off (bottom-right, 200px circle when enabled) |
-| Microphone | Off (volume 5/10 when enabled) |
-| Keystroke Overlay | Off |
-| Save Location | `~/Movies/ScreenRecorder/` |
+   ```bash
+   # Or grab it directly via curl
+   curl -LO https://github.com/codeitlikemiley/screenrecorder/releases/download/v1.0.0/ScreenRecorder-1.0.0.dmg
+   ```
 
-## Build & Run
+2. Open the `.dmg` and drag **Screen Recorder** to your **Applications** folder.
+
+3. Launch from Applications. On first launch, macOS may show a Gatekeeper warning since the app is signed but not distributed via the App Store:
+
+   ```bash
+   # Remove the quarantine flag to allow the app to open
+   xattr -d com.apple.quarantine /Applications/Screen\ Recorder.app
+   ```
+
+4. Grant **Screen Recording**, **Accessibility**, and **Microphone** permissions when prompted.
+
+### Build from Source
 
 ```bash
-# Build, sign, and package the .app bundle
+git clone https://github.com/codeitlikemiley/screenrecorder.git
+cd screenrecorder
 ./build.sh
-
-# Launch
 open .build/ScreenRecorder.app
 ```
 
-## App Icon
+> Requires macOS 14+ and Xcode Command Line Tools. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
 
-Generate or update the app icon from any source image:
+## Global Hotkeys
 
-```bash
-# Generate all macOS icon sizes + .icns from a single image
-./generate_icons.sh /path/to/your/icon.png
+All hotkeys are customizable in **Settings → Shortcuts**.
 
-# Rebuild with the new icon
-./build.sh
+| Default Shortcut | Action |
+|------------------|--------|
+| `⌘⇧S` | Start / Stop recording |
+| `⌘⇧C` | Toggle camera |
+| `⌘⇧M` | Toggle microphone |
+| `⌘⇧K` | Toggle keystroke overlay |
+| `⌘⇧H` | Show / Hide control bar |
+| `⌘⇧F` | Open recordings folder |
+| `⌘,` | Open settings |
+
+## AI Step Generation
+
+After recording, the app analyzes your session and generates step-by-step workflow documentation using AI.
+
+**Setup:** Go to **Settings** (`⌘,`) → **AI Providers** → **Add Provider** and pick a preset:
+
+| Protocol | Presets |
+|----------|---------|
+| **OpenAI** | OpenAI, DeepSeek, Qwen, Groq, Kimi, GLM, MiniMax |
+| **Anthropic** | Anthropic, MiniMax, Kimi, GLM |
+| **Gemini** | Google Gemini |
+
+Each provider is a fully editable **profile** — configure the base URL, model, max tokens, temperature, and API keys. You can add multiple profiles and switch between them at any time.
+
+Want to use a **local model**? Add a Custom Provider pointing to Ollama, LM Studio, or any OpenAI/Anthropic-compatible endpoint.
+
+> See [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md) for the full provider list, custom endpoint setup, and configuration guide.
+
+### Generated Artifacts
+
+Each recording produces a set of files in your recordings directory (`~/Movies/ScreenRecorder/` by default):
+
+```
+Recording_2026-03-15_04-30-00.mov          # Screen recording (HEVC)
+Recording_2026-03-15_04-30-00_session.json  # Session metadata (duration, events, keystrokes)
+Recording_2026-03-15_04-30-00_workflow.json # AI-generated step-by-step workflow
+Recording_2026-03-15_04-30-00_frames/       # Extracted key frames (PNG)
 ```
 
-The script uses `sips` + `iconutil` (built-in macOS tools, no dependencies) and produces all 10 required sizes (16px–1024px including @2x variants).
+| File | Description |
+|------|-------------|
+| `_session.json` | Recording metadata — date, duration, input events, processing state |
+| `_workflow.json` | AI-generated workflow with titled steps, descriptions, and frame references |
+| `_frames/` | Key frames extracted from the video, used as context for AI analysis |
 
-## First Launch Permissions
+## Session Viewer
 
-On first launch, macOS will prompt you to grant:
+After a recording is processed, the **Session Viewer** opens automatically. You can also reopen any past session from the Recording Library.
 
-1. **Screen Recording** — Required to capture your display
-2. **Camera** — Required for webcam overlay (optional)
-3. **Microphone** — Required for voice recording (optional)
-4. **Accessibility** — Required for keystroke overlay (System Settings → Privacy & Security → Accessibility)
+The viewer is a split-pane interface:
 
-## Architecture
+- **Steps Panel** (left) — AI-generated step-by-step workflow with numbered steps, action types, and descriptions
+- **Screenshot Preview** (right) — Key frame for the selected step, synced to your selection
+- **AI Prompt Tab** — View or copy the raw prompt used for AI analysis
 
-```
-Sources/
-├── App/
-│   ├── ScreenRecorderApp.swift    # @main entry + MenuBarExtra
-│   ├── AppDelegate.swift          # Lifecycle + global hotkey wiring
-│   ├── AppState.swift             # Central state (persisted via UserDefaults)
-│   └── RecordingCoordinator.swift # Orchestrates capture, camera, audio, writing
-├── Capture/
-│   ├── ScreenCaptureManager.swift # ScreenCaptureKit wrapper
-│   ├── CameraManager.swift        # AVFoundation camera
-│   └── VideoWriter.swift          # AVAssetWriter (HEVC/H.264 + camera compositing)
-├── Views/
-│   ├── ControlBar.swift           # Floating glass control bar
-│   ├── CameraOverlay.swift        # Draggable camera preview
-│   ├── KeystrokeOverlay.swift     # Keystroke display pills
-│   ├── VolumeOverlay.swift        # Mic volume HUD
-│   ├── CountdownView.swift        # 3-2-1 countdown animation
-│   ├── OverlayWindowManager.swift # Window lifecycle for all overlays
-│   └── SettingsView.swift         # Preferences panel
-├── Input/
-│   ├── GlobalHotkeys.swift        # HotKey package integration
-│   └── KeystrokeMonitor.swift     # CGEvent tap monitor
-└── Utilities/
-    ├── Permissions.swift          # Permission checking + prompts
-    └── StorageManager.swift       # File/directory management
-```
+### Editing Steps
 
-## Output Formats
+Steps are fully editable inside the viewer:
 
-| Format | Codec | Use Case |
-|--------|-------|----------|
-| **MOV (HEVC)** | H.265 | Recommended — smallest file size |
-| MP4 (H.264) | H.264 | Maximum compatibility |
-| MOV (H.264) | H.264 | Apple ecosystem compatibility |
+- **Edit** title and description inline
+- **Reorder** steps via drag-and-drop
+- **Delete** steps you don't need
 
-## Dependencies
+### Exporting
 
-- [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) — User-customizable global keyboard shortcuts with built-in SwiftUI recorder, auto-persistence, and conflict detection
+Click **Export** in the title bar to copy or save the workflow:
 
-## Release
+| Format | Description |
+|--------|-------------|
+| **Markdown Steps** | Full document with steps, screenshots, and metadata |
+| **AI Agent Prompt** | Ready-to-paste prompt for Cursor, Copilot, Codex, etc. |
+| **GitHub Issue** | Issue body with task checklist and context |
+| **JSON Workflow** | Machine-readable workflow for automation |
 
-```bash
-# 1. Set up credentials (one-time)
-cp .env.example .env
-# Edit .env with your Apple Developer credentials
+Export to clipboard or save to file — all formats are supported.
 
-# 2. Bump version in .env
-APP_VERSION="1.1.0"
+## Recording Library
 
-# 3. Build, sign, notarize, create DMG, tag & push
-./release.sh
-```
+Access all past recordings from the menu bar via **📚 Recording Library**.
 
-The release script will:
-1. Stamp the version into `Info.plist`
-2. Build a release binary
-3. Sign with Developer ID (hardened runtime)
-4. Notarize with Apple
-5. Create a DMG
-6. Git tag `v{VERSION}` and force-push to trigger the GitHub Actions release workflow
+- **Browse** — View all recordings with thumbnails, dates, duration, and status badges (`Steps Generated`, `Unprocessed`, `Processing`, `Failed`)
+- **Open** — Double-click or hit the eye icon to load the session in the Session Viewer
+- **Re-process** — Re-run AI analysis with a different provider or updated settings (reuses existing frames, skips re-extraction)
+- **Delete** — Remove a recording and all its associated artifacts (video, session, workflow, frames) with confirmation
+- **Reveal in Finder** — Jump to the recording file in Finder
 
-See [RELEASE.md](RELEASE.md) for full setup instructions.
+## Documentation
 
-## Requirements
+| Doc | Description |
+|-----|-------------|
+| [AI Providers](docs/AI_PROVIDERS.md) | Full AI provider setup, presets, custom endpoints |
+| [Architecture](docs/ARCHITECTURE.md) | Source tree, design patterns, request flow |
+| [Development](docs/DEVELOPMENT.md) | Build, permissions, config storage |
+| [Release](docs/RELEASE.md) | Signing, notarization, DMG creation |
+| [Contributing](docs/CONTRIBUTING.md) | How to contribute, PR guidelines |
 
-- macOS 14.0 (Sonoma) or later
-- Xcode Command Line Tools
-- Swift 5.9+
-- Apple Developer certificate (for hardened runtime signing)
+## License
+
+[MIT](LICENSE)

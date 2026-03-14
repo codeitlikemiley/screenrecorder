@@ -17,6 +17,7 @@ final class GlobalHotkeyManager {
     var onToggleCamera: (() -> Void)?
     var onToggleKeystrokeMonitor: (() -> Void)?
     var onOpenRecordingsFolder: (() -> Void)?
+    var onOpenLibrary: (() -> Void)?
     var onShowHideCamera: (() -> Void)?
     var onMuteUnmuteMic: (() -> Void)?
 
@@ -96,6 +97,11 @@ final class GlobalHotkeyManager {
         // ⌘⇧F — Open Recordings Folder
         KeyboardShortcuts.onKeyDown(for: .openRecordings) { [weak self] in
             self?.onOpenRecordingsFolder?()
+        }
+
+        // ⌘⇧L — Open Recording Library
+        KeyboardShortcuts.onKeyDown(for: .openLibrary) { [weak self] in
+            self?.onOpenLibrary?()
         }
 
         // ⌘⇧= — Increase Mic Volume

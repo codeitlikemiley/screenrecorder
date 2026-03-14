@@ -28,7 +28,7 @@ class StepGenerator {
         let imageData = loadKeyFrames(from: session, framesDirectory: framesDirectory, maxImages: 10)
 
         // 3. Call AI
-        let responseText = try await aiService.complete(prompt: prompt, images: imageData, model: nil)
+        let responseText = try await aiService.complete(AIRequest(prompt: prompt, images: imageData))
 
         // 4. Parse response into structured steps
         let workflow = parseResponse(responseText, session: session, model: aiService.providerName)
