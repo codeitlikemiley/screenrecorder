@@ -4,6 +4,7 @@ import KeyboardShortcuts
 /// Settings / Preferences view.
 struct SettingsView: View {
     @ObservedObject var appState: AppState
+    @StateObject private var aiManager = AIProviderManager.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -76,6 +77,11 @@ struct SettingsView: View {
                         }
                     }
 
+                    // AI Providers
+                    settingsSection(title: "AI Providers", icon: "brain") {
+                        AIProviderSettingsView(manager: aiManager)
+                    }
+
                     // Keyboard Shortcuts (user-customizable)
                     settingsSection(title: "Keyboard Shortcuts", icon: "keyboard") {
                         VStack(alignment: .leading, spacing: 10) {
@@ -105,7 +111,7 @@ struct SettingsView: View {
                 .padding(24)
             }
         }
-        .frame(width: 460, height: 640)
+        .frame(width: 480, height: 780)
         .background(.ultraThickMaterial)
     }
 

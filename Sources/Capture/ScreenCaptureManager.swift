@@ -10,9 +10,6 @@ class ScreenCaptureManager: NSObject, ObservableObject, SCContentSharingPickerOb
     private var streamOutput: CaptureStreamOutput?
     private var contentFilter: SCContentFilter?
 
-    @Published var isPickerComplete = false
-    @Published var pickerError: String?
-
     // Continuations for async picker flow
     private var pickerContinuation: CheckedContinuation<SCContentFilter, Error>?
 
@@ -23,8 +20,8 @@ class ScreenCaptureManager: NSObject, ObservableObject, SCContentSharingPickerOb
 
     // MARK: - Content Selection via System Picker
 
-    /// Shows the system content sharing picker (like Zoom's screen selection).
-    /// This handles screen recording permission internally — no separate dialog.
+    /// Shows the system content sharing picker.
+    /// This handles screen recording permission internally — no separate dialog needed.
     func pickContent() async throws -> SCContentFilter {
         // If we already have a content filter from a previous selection, reuse it
         if let existing = contentFilter {

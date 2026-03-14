@@ -41,6 +41,15 @@ if [ -f "Resources/AppIcon.icns" ]; then
     echo "🎨 App icon included"
 fi
 
+# Copy SPM resource bundles (e.g., KeyboardShortcuts localization)
+BUNDLES_DIR=".build/xcode/Build/Products/Debug"
+for bundle in "$BUNDLES_DIR"/*.bundle; do
+    if [ -d "$bundle" ]; then
+        cp -R "$bundle" "$RESOURCES_DIR/"
+        echo "📦 Copied $(basename "$bundle")"
+    fi
+done
+
 # Sign the .app bundle with hardened runtime + entitlements
 echo "🔏 Signing with developer certificate (hardened runtime)..."
 codesign --force --sign "$SIGNING_IDENTITY" \

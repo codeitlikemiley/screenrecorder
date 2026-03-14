@@ -26,6 +26,20 @@ class AppState: ObservableObject {
     @Published var isCountingDown = false
     @Published var countdownValue = 3
 
+    /// Whether the current/next recording runs the AI pipeline.
+    /// Derived from AIProviderManager — true only when AI is enabled AND a provider is configured.
+    enum RecordingMode: String {
+        case normal  // Plain screen recording — video file only
+        case ai      // Full AI pipeline — interaction logging, key frames, AI step generation
+    }
+
+    var recordingMode: RecordingMode {
+        let mgr = AIProviderManager.shared
+        guard mgr.isAIEnabled else { return .normal }
+        guard mgr.makeService() != nil else { return .normal }
+        return .ai
+    }
+
     // MARK: - Feature Toggles (persisted)
     @Published var isCameraEnabled = false
     @Published var isKeystrokeOverlayEnabled = false

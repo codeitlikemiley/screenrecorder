@@ -9,7 +9,10 @@ class RecordingCoordinator: ObservableObject {
     let screenCapture = ScreenCaptureManager()
     let cameraManager = CameraManager()
     let keystrokeMonitor = KeystrokeMonitor()
+    let mouseMonitor = MouseMonitor()
     let overlayManager = OverlayWindowManager()
+    let interactionLogger = InteractionLogger()
+    let postProcessor = PostRecordingProcessor()
     private var videoWriter: VideoWriter?
     private var isSetUp = false
 
@@ -36,7 +39,26 @@ class RecordingCoordinator: ObservableObject {
                 if self.appState.isKeystrokeOverlayEnabled {
                     self.appState.addKeystroke(event)
                 }
+                // Log keystrokes to metadata only in AI mode
+                if self.appState.isRecording && self.appState.recordingMode == .ai {
+                    self.interactionLogger.logKeystroke(
+                        key: event.keyString,
+                        modifiers: event.modifiers.map(\.symbol),
+                        isSpecialKey: event.isSpecialKey
+                    )
+                }
             }
+        }
+
+        // Setup mouse monitor callbacks
+        mouseMonitor.onMouseClick = { [weak self] position, button, clickCount in
+            self?.interactionLogger.logMouseClick(position: position, button: button, clickCount: clickCount)
+        }
+        mouseMonitor.onMouseDrag = { [weak self] startPos, endPos, duration in
+            self?.interactionLogger.logMouseDrag(startPosition: startPos, endPosition: endPos, duration: duration)
+        }
+        mouseMonitor.onMouseScroll = { [weak self] position, deltaX, deltaY in
+            self?.interactionLogger.logMouseScroll(position: position, deltaX: deltaX, deltaY: deltaY)
         }
 
         // Setup overlay windows
@@ -124,13 +146,10 @@ class RecordingCoordinator: ObservableObject {
             }
         }
 
-        // Countdown (camera is visible and warming up, nothing is recording yet)
+        // Countdown overlay (visible fullscreen 3→2→1)
         appState.isCountingDown = true
-        for i in stride(from: 3, through: 1, by: -1) {
-            appState.countdownValue = i
-            print("  ⏱ \(i)...")
-            try? await Task.sleep(nanoseconds: 800_000_000)
-        }
+        print("  ⏱ Showing countdown overlay...")
+        await overlayManager.showCountdown(appState: appState)
         appState.isCountingDown = false
 
         let outputURL = appState.generateOutputURL()
@@ -199,6 +218,15 @@ class RecordingCoordinator: ObservableObject {
                 startKeystrokeMonitorWithPermissionCheck()
             }
 
+            // Start interaction logging only in AI mode
+            if appState.recordingMode == .ai {
+                interactionLogger.startSession()
+                mouseMonitor.startMonitoring()
+                print("  📋 Interaction logging started (AI mode)")
+            } else {
+                print("  ℹ️ Normal recording mode — skipping interaction logging")
+            }
+
             // NOW mark as recording and start timer
             appState.isRecording = true
             appState.startRecordingTimer()
@@ -243,8 +271,9 @@ class RecordingCoordinator: ObservableObject {
         cameraManager.onSampleBuffer = nil
         overlayManager.destroyCameraWindow()
 
-        // 4. Stop keystroke monitor
+        // 4. Stop keystroke monitor + mouse monitor
         keystrokeMonitor.stopMonitoring()
+        mouseMonitor.stopMonitoring()
 
         // 5. Drain buffers
         try? await Task.sleep(nanoseconds: 200_000_000)
@@ -254,6 +283,25 @@ class RecordingCoordinator: ObservableObject {
             do {
                 let url = try await writer.stopWriting()
                 print("✅ Recording saved to: \(url.path)")
+
+                if appState.recordingMode == .ai {
+                    // 7. Flush interaction metadata as JSON sidecar
+                    let metadataURL = interactionLogger.flush(videoURL: url)
+
+                    // 8. Run post-recording processing pipeline (async, non-blocking)
+                    let recordingDuration = appState.recordingDuration
+                    Task {
+                        let _ = await postProcessor.process(
+                            videoURL: url,
+                            metadataURL: metadataURL,
+                            duration: recordingDuration
+                        )
+                    }
+                    print("  🤖 AI pipeline launched")
+                } else {
+                    print("  ℹ️ Normal mode — video saved, no AI processing")
+                }
+
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             } catch {
                 print("❌ Failed to save recording: \(error)")

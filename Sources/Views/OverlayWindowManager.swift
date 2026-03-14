@@ -269,6 +269,52 @@ class OverlayWindowManager {
         keystrokeWindow = window
     }
 
+    // MARK: - Countdown Overlay Window
+
+    private var countdownWindow: NSWindow?
+
+    /// Shows a fullscreen countdown overlay (3, 2, 1) and awaits completion.
+    /// The window auto-destroys after the countdown finishes.
+    func showCountdown(appState: AppState) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            guard let screen = NSScreen.main else {
+                continuation.resume()
+                return
+            }
+
+            let screenFrame = screen.frame
+
+            let overlayView = CountdownView(appState: appState) { [weak self] in
+                // Countdown complete — destroy window and resume
+                self?.countdownWindow?.orderOut(nil)
+                self?.countdownWindow = nil
+                continuation.resume()
+            }
+
+            let hostingView = NSHostingView(rootView: overlayView)
+            hostingView.frame = NSRect(x: 0, y: 0, width: screenFrame.width, height: screenFrame.height)
+
+            let window = NSWindow(
+                contentRect: screenFrame,
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            window.level = .screenSaver
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.hasShadow = false
+            window.ignoresMouseEvents = true
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+            window.isReleasedWhenClosed = false
+            window.sharingType = .none  // Don't capture the countdown itself
+            window.contentView = hostingView
+
+            self.countdownWindow = window
+            window.orderFrontRegardless()
+        }
+    }
+
     // MARK: - Cleanup
 
     func cleanup() {
