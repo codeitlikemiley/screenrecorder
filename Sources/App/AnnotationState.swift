@@ -8,6 +8,7 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
     case arrow
     case rectangle
     case ellipse
+    case text
 
     var id: String { rawValue }
 
@@ -18,6 +19,7 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
         case .arrow: return "arrow.up.right"
         case .rectangle: return "rectangle"
         case .ellipse: return "circle"
+        case .text: return "textformat"
         }
     }
 
@@ -28,6 +30,7 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
         case .arrow: return "Arrow"
         case .rectangle: return "Rectangle"
         case .ellipse: return "Ellipse"
+        case .text: return "Text"
         }
     }
 
@@ -38,6 +41,7 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
         case .arrow: return "⌘3"
         case .rectangle: return "⌘4"
         case .ellipse: return "⌘5"
+        case .text: return "⌘6"
         }
     }
 }
@@ -47,9 +51,10 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
 struct AnnotationStroke: Identifiable {
     let id = UUID()
     var tool: AnnotationTool
-    var points: [CGPoint]      // For pen: all points. For shapes: [origin, endPoint]
+    var points: [CGPoint]      // For pen: all points. For shapes: [origin, endPoint]. For text: [position]
     var color: Color
     var lineWidth: CGFloat
+    var textContent: String?   // Only used for .text tool
 
     /// For shape tools, the bounding rect defined by first and last point
     var boundingRect: CGRect? {

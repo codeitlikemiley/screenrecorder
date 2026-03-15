@@ -48,6 +48,10 @@ class AppState: ObservableObject {
     @Published var isMicMuted = false           // During-recording mute (doesn't disable mic)
     @Published var isCameraPreviewHidden = false // During-recording hide (doesn't disable camera)
     @Published var micVolume: Int = 5            // 0-10 scale, 0 = mute, 5 = default
+
+    // MARK: - Agent Server Settings
+    @Published var isAgentServerEnabled = true   // Start JSON-RPC server on launch
+    @Published var agentServerPort: Int = 19820  // localhost port
     @Published var showVolumeOverlay = false      // Brief HUD when volume changes
 
     // MARK: - Annotation / Doodle Mode

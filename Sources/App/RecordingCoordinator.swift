@@ -13,6 +13,8 @@ class RecordingCoordinator: ObservableObject {
     let overlayManager = OverlayWindowManager()
     let interactionLogger = InteractionLogger()
     let postProcessor = PostRecordingProcessor()
+    let agentServer = AgentServer()
+    private var agentRouter: AgentRouter?
     private var videoWriter: VideoWriter?
     private var isSetUp = false
 
@@ -72,6 +74,13 @@ class RecordingCoordinator: ObservableObject {
         appState.hasMicrophonePermission = PermissionManager.shared.checkMicrophonePermission()
         appState.hasAccessibilityPermission = PermissionManager.shared.checkAccessibilityPermission()
         appState.hasScreenPermission = true
+
+        // Start agent server for programmatic control
+        if appState.isAgentServerEnabled {
+            let router = AgentRouter(appState: appState, coordinator: self)
+            self.agentRouter = router
+            agentServer.start(router: router)
+        }
 
         print("🎬 Setup complete!")
     }

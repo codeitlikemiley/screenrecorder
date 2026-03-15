@@ -63,6 +63,8 @@ struct AnnotationCanvasView: View {
             drawRectangle(stroke, style: strokeStyle, in: &context)
         case .ellipse:
             drawEllipse(stroke, style: strokeStyle, in: &context)
+        case .text:
+            drawText(stroke, in: &context)
         }
     }
 
@@ -132,6 +134,35 @@ struct AnnotationCanvasView: View {
 
         let path = Path(ellipseIn: rect)
         context.stroke(path, with: .color(stroke.color), style: style)
+    }
+
+    private func drawText(_ stroke: AnnotationStroke, in context: inout GraphicsContext) {
+        guard let position = stroke.points.first,
+              let content = stroke.textContent, !content.isEmpty else { return }
+
+        let fontSize = stroke.lineWidth // lineWidth doubles as fontSize for text
+        let text = Text(content)
+            .font(.system(size: fontSize, weight: .semibold))
+            .foregroundColor(stroke.color)
+
+        // Draw with background pill for readability
+        let resolved = context.resolve(text)
+        let textSize = resolved.measure(in: CGSize(width: 1000, height: 1000))
+
+        // Background rounded rect
+        let padding: CGFloat = 6
+        let bgRect = CGRect(
+            x: position.x - padding,
+            y: position.y - padding,
+            width: textSize.width + padding * 2,
+            height: textSize.height + padding * 2
+        )
+        let bgPath = Path(roundedRect: bgRect, cornerRadius: 4)
+        context.fill(bgPath, with: .color(.black.opacity(0.6)))
+        context.stroke(bgPath, with: .color(stroke.color.opacity(0.5)), lineWidth: 1)
+
+        // Text
+        context.draw(resolved, at: CGPoint(x: position.x + textSize.width / 2, y: position.y + textSize.height / 2))
     }
 }
 
