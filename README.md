@@ -7,6 +7,10 @@ A native macOS screen recorder designed for developers. Record your screen, came
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 [![Release](https://github.com/codeitlikemiley/screenrecorder/actions/workflows/release.yml/badge.svg)](https://github.com/codeitlikemiley/screenrecorder/actions/workflows/release.yml)
 
+<p align="center">
+  <img src="docs/images/system-tray-menu.png" width="380" alt="System Tray Menu">
+</p>
+
 ## Features
 
 - **Screen Recording** — Native retina resolution via ScreenCaptureKit
@@ -70,6 +74,10 @@ All hotkeys are customizable in **Settings → Shortcuts**.
 | `⌘⇧K` | Toggle keystroke overlay |
 | `⌘⇧H` | Show / Hide control bar |
 | `⌘⇧F` | Open recordings folder |
+| `⌘⇧L` | Recording Library |
+| `⌘⇧=` | Mic volume up |
+| `⌘⇧-` | Mic volume down |
+| `⌘⇧0` | Reset mic volume |
 | `⌘,` | Open settings |
 
 ### Annotation (Doodle Mode)
@@ -83,6 +91,13 @@ All hotkeys are customizable in **Settings → Shortcuts**.
 | `⌘3` | Arrow tool |
 | `⌘4` | Rectangle tool |
 | `⌘5` | Ellipse tool |
+| `⌘6` | Text tool |
+| `⌘Z` | Undo annotation |
+| `⌘⇧Z` | Redo annotation |
+
+<p align="center">
+  <img src="docs/images/annotation-toolbar.png" width="500" alt="Annotation Toolbar">
+</p>
 
 > ⚠️ **macOS Screenshot Conflict:**
 > `⌘⇧3` and `⌘⇧4` conflict with macOS default screenshot shortcuts. Each has an alt fallback (`⌘⇧S` and `⌘⇧⌥3`) that works without changes. For the best experience, disable the macOS defaults:
@@ -136,6 +151,10 @@ The viewer is a split-pane interface:
 - **Screenshot Preview** (right) — Key frame for the selected step, synced to your selection
 - **AI Prompt Tab** — View or copy the raw prompt used for AI analysis
 
+<p align="center">
+  <img src="docs/images/session-viewer.png" width="600" alt="Session Viewer">
+</p>
+
 ### Editing Steps
 
 Steps are fully editable inside the viewer:
@@ -157,6 +176,10 @@ Click **Export** in the title bar to copy or save the workflow:
 
 Export to clipboard or save to file — all formats are supported.
 
+<p align="center">
+  <img src="docs/images/export-options.png" width="600" alt="Export Options">
+</p>
+
 ## Recording Library
 
 Access all past recordings from the menu bar via **📚 Recording Library**.
@@ -166,6 +189,10 @@ Access all past recordings from the menu bar via **📚 Recording Library**.
 - **Re-process** — Re-run AI analysis with a different provider or updated settings (reuses existing frames, skips re-extraction)
 - **Delete** — Remove a recording and all its associated artifacts (video, session, workflow, frames) with confirmation
 - **Reveal in Finder** — Jump to the recording file in Finder
+
+<p align="center">
+  <img src="docs/images/recording-library.png" width="600" alt="Recording Library">
+</p>
 
 ## Documentation
 
