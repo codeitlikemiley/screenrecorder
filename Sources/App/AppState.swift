@@ -49,6 +49,11 @@ class AppState: ObservableObject {
     @Published var isCameraPreviewHidden = false // During-recording hide (doesn't disable camera)
     @Published var micVolume: Int = 5            // 0-10 scale, 0 = mute, 5 = default
     @Published var showVolumeOverlay = false      // Brief HUD when volume changes
+
+    // MARK: - Annotation / Doodle Mode
+    @Published var isAnnotationModeActive = false   // Drawing mode on/off (accepts mouse input)
+    @Published var isAnnotationVisible = true       // Show/hide drawn content without losing data
+    let annotationState = AnnotationState()         // Drawing data (strokes, tools, undo stack)
     var volumeOverlayWorkItem: DispatchWorkItem?
 
     // MARK: - Camera (persisted)

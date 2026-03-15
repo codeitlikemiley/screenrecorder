@@ -20,12 +20,20 @@ final class GlobalHotkeyManager {
     var onOpenLibrary: (() -> Void)?
     var onShowHideCamera: (() -> Void)?
     var onMuteUnmuteMic: (() -> Void)?
+    var onToggleAnnotation: (() -> Void)?
+    var onClearAnnotations: (() -> Void)?
+    var onAnnotationScreenshot: (() -> Void)?
 
     // MARK: - Register
 
     func registerHotkeys() {
-        // ⌘⇧S — Start/Stop Recording
+        // ⌘⇧4 — Start/Stop Recording
         KeyboardShortcuts.onKeyDown(for: .toggleRecording) { [weak self] in
+            self?.onToggleRecording?()
+        }
+
+        // ⌘⇧S — Start/Stop Recording (Alt fallback)
+        KeyboardShortcuts.onKeyDown(for: .toggleRecordingAlt) { [weak self] in
             self?.onToggleRecording?()
         }
 
@@ -117,6 +125,43 @@ final class GlobalHotkeyManager {
         // ⌘⇧0 — Reset Mic Volume to Default
         KeyboardShortcuts.onKeyDown(for: .volumeReset) { [weak self] in
             self?.appState?.resetMicVolume()
+        }
+
+        // ⌘⇧D — Toggle Annotation Mode
+        KeyboardShortcuts.onKeyDown(for: .toggleAnnotation) { [weak self] in
+            self?.onToggleAnnotation?()
+        }
+
+        // ⌘⇧X — Clear All Annotations
+        KeyboardShortcuts.onKeyDown(for: .clearAnnotations) { [weak self] in
+            self?.onClearAnnotations?()
+        }
+
+        // ⌘⇧3 — Annotation Screenshot
+        KeyboardShortcuts.onKeyDown(for: .annotationScreenshot) { [weak self] in
+            self?.onAnnotationScreenshot?()
+        }
+
+        // ⌘⇧⌥3 — Annotation Screenshot (Alt fallback)
+        KeyboardShortcuts.onKeyDown(for: .annotationScreenshotAlt) { [weak self] in
+            self?.onAnnotationScreenshot?()
+        }
+
+        // ⌘⇧1-5 — Per-tool shortcuts
+        KeyboardShortcuts.onKeyDown(for: .toolPen) { [weak self] in
+            self?.appState?.annotationState.selectedTool = .pen
+        }
+        KeyboardShortcuts.onKeyDown(for: .toolLine) { [weak self] in
+            self?.appState?.annotationState.selectedTool = .line
+        }
+        KeyboardShortcuts.onKeyDown(for: .toolArrow) { [weak self] in
+            self?.appState?.annotationState.selectedTool = .arrow
+        }
+        KeyboardShortcuts.onKeyDown(for: .toolRectangle) { [weak self] in
+            self?.appState?.annotationState.selectedTool = .rectangle
+        }
+        KeyboardShortcuts.onKeyDown(for: .toolEllipse) { [weak self] in
+            self?.appState?.annotationState.selectedTool = .ellipse
         }
     }
 

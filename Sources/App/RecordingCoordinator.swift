@@ -63,6 +63,9 @@ class RecordingCoordinator: ObservableObject {
 
         // Setup overlay windows
         overlayManager.setup(appState: appState, cameraManager: cameraManager)
+        overlayManager.onAnnotationScreenshot = { [weak self] in
+            self?.captureAnnotationScreenshot()
+        }
 
         // Silent permission checks (no prompts)
         appState.hasCameraPermission = PermissionManager.shared.checkCameraPermission()
@@ -275,6 +278,9 @@ class RecordingCoordinator: ObservableObject {
         keystrokeMonitor.stopMonitoring()
         mouseMonitor.stopMonitoring()
 
+        // 4b. Deactivate annotation mode (keep strokes visible for review)
+        appState.isAnnotationModeActive = false
+
         // 5. Drain buffers
         try? await Task.sleep(nanoseconds: 200_000_000)
 
@@ -377,5 +383,37 @@ class RecordingCoordinator: ObservableObject {
 
         appState.hasAccessibilityPermission = false
         print("❌ Keystroke overlay disabled — approve Accessibility permission, then restart recording")
+    }
+
+    // MARK: - Annotation Mode
+
+    /// Toggle annotation drawing mode on/off
+    func toggleAnnotationMode() {
+        appState.isAnnotationModeActive.toggle()
+        print(appState.isAnnotationModeActive
+            ? "✏️ Annotation mode activated"
+            : "✏️ Annotation mode deactivated")
+    }
+
+    /// Clear all annotation strokes
+    func clearAnnotations() {
+        appState.annotationState.clearAll()
+        print("🗑 Annotations cleared")
+    }
+
+    /// Capture a screenshot of the screen including annotations
+    func captureAnnotationScreenshot() {
+        ScreenshotCapture.captureAndSave(
+            defaultDirectory: appState.saveDirectory,
+            hideToolbar: { [weak self] in
+                self?.overlayManager.hideAnnotationToolbarForCapture()
+            },
+            showToolbar: { [weak self] in
+                // Only re-show if annotation mode is still active
+                if self?.appState.isAnnotationModeActive == true {
+                    self?.overlayManager.showAnnotationToolbarAfterCapture()
+                }
+            }
+        )
     }
 }

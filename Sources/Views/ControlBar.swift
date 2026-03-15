@@ -55,6 +55,15 @@ struct ControlBar: View {
                 appState.isKeystrokeOverlayEnabled.toggle()
             }
 
+            // Annotation Toggle (works both during and outside recording)
+            toggleButton(
+                icon: "pencil.tip.crop.circle",
+                isActive: appState.isAnnotationModeActive,
+                tooltip: "Annotate (⌘⇧D)"
+            ) {
+                appState.isAnnotationModeActive.toggle()
+            }
+
             divider
 
             // Settings

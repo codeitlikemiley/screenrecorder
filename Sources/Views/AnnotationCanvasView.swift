@@ -1,0 +1,137 @@
+import SwiftUI
+
+/// Full-screen SwiftUI Canvas view for drawing annotations.
+/// Renders all committed strokes plus the in-progress stroke.
+/// Handles mouse/trackpad input via DragGesture.
+struct AnnotationCanvasView: View {
+    @ObservedObject var annotationState: AnnotationState
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                // Drawing canvas
+                Canvas { context, size in
+                    // Draw all committed strokes
+                    for stroke in annotationState.strokes {
+                        drawStroke(stroke, in: &context)
+                    }
+
+                    // Draw the in-progress stroke
+                    if let current = annotationState.currentStroke {
+                        drawStroke(current, in: &context)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                // Invisible overlay to capture drag gestures
+                Color.clear
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 1, coordinateSpace: .local)
+                            .onChanged { value in
+                                if annotationState.currentStroke == nil {
+                                    annotationState.beginStroke(at: value.startLocation)
+                                }
+                                annotationState.continueStroke(to: value.location)
+                            }
+                            .onEnded { _ in
+                                annotationState.endStroke()
+                            }
+                    )
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+    }
+
+    // MARK: - Stroke Rendering
+
+    private func drawStroke(_ stroke: AnnotationStroke, in context: inout GraphicsContext) {
+        let strokeStyle = StrokeStyle(
+            lineWidth: stroke.lineWidth,
+            lineCap: .round,
+            lineJoin: .round
+        )
+
+        switch stroke.tool {
+        case .pen:
+            drawFreehand(stroke, style: strokeStyle, in: &context)
+        case .line:
+            drawLine(stroke, style: strokeStyle, in: &context)
+        case .arrow:
+            drawArrow(stroke, style: strokeStyle, in: &context)
+        case .rectangle:
+            drawRectangle(stroke, style: strokeStyle, in: &context)
+        case .ellipse:
+            drawEllipse(stroke, style: strokeStyle, in: &context)
+        }
+    }
+
+    private func drawFreehand(_ stroke: AnnotationStroke, style: StrokeStyle, in context: inout GraphicsContext) {
+        guard stroke.points.count >= 2 else { return }
+
+        var path = Path()
+        path.move(to: stroke.points[0])
+        for i in 1..<stroke.points.count {
+            path.addLine(to: stroke.points[i])
+        }
+
+        context.stroke(path, with: .color(stroke.color), style: style)
+    }
+
+    private func drawLine(_ stroke: AnnotationStroke, style: StrokeStyle, in context: inout GraphicsContext) {
+        guard stroke.points.count >= 2 else { return }
+
+        var path = Path()
+        path.move(to: stroke.points[0])
+        path.addLine(to: stroke.points[stroke.points.count - 1])
+
+        context.stroke(path, with: .color(stroke.color), style: style)
+    }
+
+    private func drawArrow(_ stroke: AnnotationStroke, style: StrokeStyle, in context: inout GraphicsContext) {
+        guard stroke.points.count >= 2 else { return }
+
+        let start = stroke.points[0]
+        let end = stroke.points[stroke.points.count - 1]
+
+        // Main line
+        var path = Path()
+        path.move(to: start)
+        path.addLine(to: end)
+
+        // Arrowhead
+        let angle = atan2(end.y - start.y, end.x - start.x)
+        let arrowLength: CGFloat = max(12, stroke.lineWidth * 4)
+        let arrowAngle: CGFloat = .pi / 6  // 30 degrees
+
+        let arrow1 = CGPoint(
+            x: end.x - arrowLength * cos(angle - arrowAngle),
+            y: end.y - arrowLength * sin(angle - arrowAngle)
+        )
+        let arrow2 = CGPoint(
+            x: end.x - arrowLength * cos(angle + arrowAngle),
+            y: end.y - arrowLength * sin(angle + arrowAngle)
+        )
+
+        path.move(to: arrow1)
+        path.addLine(to: end)
+        path.addLine(to: arrow2)
+
+        context.stroke(path, with: .color(stroke.color), style: style)
+    }
+
+    private func drawRectangle(_ stroke: AnnotationStroke, style: StrokeStyle, in context: inout GraphicsContext) {
+        guard let rect = stroke.boundingRect else { return }
+
+        let path = Path(roundedRect: rect, cornerRadius: 2)
+        context.stroke(path, with: .color(stroke.color), style: style)
+    }
+
+    private func drawEllipse(_ stroke: AnnotationStroke, style: StrokeStyle, in context: inout GraphicsContext) {
+        guard let rect = stroke.boundingRect else { return }
+
+        let path = Path(ellipseIn: rect)
+        context.stroke(path, with: .color(stroke.color), style: style)
+    }
+}
+

@@ -9,6 +9,7 @@ class SessionViewerModel: ObservableObject {
     @Published var workflow: GeneratedWorkflow?
     @Published var steps: [WorkflowStep] = []
     @Published var selectedStepIndex: Int? = nil
+    @Published var showAnnotated: Bool = true  // Show annotated frames by default
     @Published var isLoading = false
     @Published var errorMessage: String?
 
@@ -67,8 +68,31 @@ class SessionViewerModel: ObservableObject {
         return steps[idx]
     }
 
-    /// URL for the screenshot of the selected step
+    /// URL for the screenshot of the selected step (annotated version if available and enabled)
     var selectedScreenshotURL: URL? {
+        guard let step = selectedStep,
+              let session = session,
+              let framesDir = session.framesDirectory,
+              let baseDir = baseDirectory else { return nil }
+
+        let dir = baseDir.appendingPathComponent(framesDir)
+
+        // Prefer annotated screenshot if toggle is on and file exists
+        if showAnnotated,
+           let annotatedFile = step.annotatedScreenshotFile {
+            let annotatedURL = dir.appendingPathComponent(annotatedFile)
+            if FileManager.default.fileExists(atPath: annotatedURL.path) {
+                return annotatedURL
+            }
+        }
+
+        // Fall back to original
+        guard let filename = step.screenshotFile else { return nil }
+        return dir.appendingPathComponent(filename)
+    }
+
+    /// URL for the original (non-annotated) screenshot
+    var originalScreenshotURL: URL? {
         guard let step = selectedStep,
               let filename = step.screenshotFile,
               let session = session,

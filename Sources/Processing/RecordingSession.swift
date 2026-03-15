@@ -36,6 +36,12 @@ struct RecordingSession: Codable {
     /// Speech transcript (nil if no speech detected or transcription failed)
     var transcript: SpeechTranscriber.TranscriptResult?
 
+    /// Aggregated semantic actions (nil if not yet aggregated)
+    var aggregatedActions: [AggregatedAction]?
+
+    /// Raw interaction events (for re-aggregation and detailed analysis)
+    var rawEvents: [InteractionEvent]?
+
     /// Interaction events summary
     var eventSummary: EventSummary
 
@@ -97,6 +103,8 @@ struct RecordingSession: Codable {
             framesDirectory: "\(baseName)_frames",
             frames: [],
             transcript: nil,
+            aggregatedActions: nil,
+            rawEvents: events.isEmpty ? nil : events,
             eventSummary: EventSummary(
                 totalEvents: events.count,
                 mouseClicks: clicks,

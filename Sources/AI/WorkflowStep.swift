@@ -1,4 +1,21 @@
 import Foundation
+import CoreGraphics
+
+/// A Codable wrapper for CGPoint, since CGPoint's Codable conformance
+/// is not always reliable across frameworks.
+struct CodablePoint: Codable {
+    let x: CGFloat
+    let y: CGFloat
+
+    init(_ point: CGPoint) {
+        self.x = point.x
+        self.y = point.y
+    }
+
+    var cgPoint: CGPoint {
+        CGPoint(x: x, y: y)
+    }
+}
 
 /// A single step in a generated workflow.
 /// Produced by the AI StepGenerator from recording session data.
@@ -7,11 +24,13 @@ struct WorkflowStep: Codable, Identifiable {
     var stepNumber: Int
     var title: String              // e.g. "Click the Settings gear icon"
     var description: String        // Detailed instruction text
-    var screenshotFile: String?    // Reference to key frame PNG
+    var screenshotFile: String?           // Reference to key frame PNG
+    var annotatedScreenshotFile: String?  // Reference to annotated version with bounding boxes
     var timestampStart: TimeInterval
     var timestampEnd: TimeInterval?
     var actionType: ActionType
-    var uiElement: String?         // The UI element involved (e.g. "Settings button", "Search field")
+    var uiElement: String?                // The UI element involved (e.g. "Settings button", "Search field")
+    var interactionPosition: CodablePoint? // Screen coordinates where the interaction occurred
 
     enum ActionType: String, Codable {
         case click
@@ -31,20 +50,24 @@ struct WorkflowStep: Codable, Identifiable {
         title: String,
         description: String,
         screenshotFile: String? = nil,
+        annotatedScreenshotFile: String? = nil,
         timestampStart: TimeInterval,
         timestampEnd: TimeInterval? = nil,
         actionType: ActionType = .click,
-        uiElement: String? = nil
+        uiElement: String? = nil,
+        interactionPosition: CodablePoint? = nil
     ) {
         self.id = UUID()
         self.stepNumber = stepNumber
         self.title = title
         self.description = description
         self.screenshotFile = screenshotFile
+        self.annotatedScreenshotFile = annotatedScreenshotFile
         self.timestampStart = timestampStart
         self.timestampEnd = timestampEnd
         self.actionType = actionType
         self.uiElement = uiElement
+        self.interactionPosition = interactionPosition
     }
 }
 

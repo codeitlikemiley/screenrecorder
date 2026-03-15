@@ -2,15 +2,17 @@ import Foundation
 import Combine
 
 /// Orchestrates the post-recording processing pipeline.
-/// Runs key frame extraction, speech transcription, and AI step generation after a recording completes,
-/// producing a complete RecordingSession bundle and workflow.
+/// Runs key frame extraction, event aggregation, speech transcription, AI step generation,
+/// and frame annotation after a recording completes.
 ///
 /// Pipeline stages:
 /// 1. Load interaction metadata from JSON sidecar
 /// 2. Extract key frames at interaction timestamps
 /// 3. Transcribe speech from audio track
-/// 4. Generate AI steps (if configured)
-/// 5. Build and save RecordingSession
+/// 4. Aggregate raw events into semantic actions
+/// 5. Generate AI steps (if configured)
+/// 6. Annotate frames with bounding boxes
+/// 7. Build and save RecordingSession
 @MainActor
 class PostRecordingProcessor: ObservableObject {
 
@@ -26,7 +28,9 @@ class PostRecordingProcessor: ObservableObject {
         case loadingMetadata = "Loading metadata…"
         case extractingFrames = "Extracting key frames…"
         case transcribingSpeech = "Transcribing speech…"
+        case aggregatingEvents = "Aggregating events…"
         case generatingSteps = "Generating AI steps…"
+        case annotatingFrames = "Annotating frames…"
         case buildingSession = "Building session…"
         case complete = "Complete"
         case failed = "Failed"
@@ -36,20 +40,12 @@ class PostRecordingProcessor: ObservableObject {
 
     private let keyFrameExtractor = KeyFrameExtractor()
     private let speechTranscriber = SpeechTranscriber()
-    private lazy var stepGenerator: StepGenerator = {
-        // Default AIService — will be replaced at generation time with active provider
-        let service = AIProviderManager.shared.makeService() ?? DummyAIService()
-        return StepGenerator(aiService: service)
-    }()
+    private let eventAggregator = EventAggregator()
+    private let frameAnnotator = FrameAnnotator()
 
     // MARK: - Process Recording
 
     /// Process a completed recording.
-    /// - Parameters:
-    ///   - videoURL: URL of the recorded video file
-    ///   - metadataURL: URL of the interaction metadata JSON (from InteractionLogger)
-    ///   - duration: Total recording duration in seconds
-    /// - Returns: A fully processed RecordingSession
     func process(
         videoURL: URL,
         metadataURL: URL?,
@@ -95,7 +91,6 @@ class PostRecordingProcessor: ObservableObject {
         do {
             let strategy: KeyFrameExtractor.ExtractionStrategy
             if events.isEmpty {
-                // No interaction data — extract at 2-second intervals
                 strategy = .atInterval(2.0)
             } else {
                 strategy = .atInteractions(events)
@@ -115,15 +110,14 @@ class PostRecordingProcessor: ObservableObject {
                 )
             }
 
-            updateStage(.extractingFrames, progress: 0.3)
+            updateStage(.extractingFrames, progress: 0.25)
             print("  📸 Extracted \(extractedFrames.count) key frames")
         } catch {
             print("  ⚠️ Key frame extraction failed: \(error.localizedDescription)")
-            // Non-fatal — continue processing
         }
 
         // Stage 3: Transcribe speech
-        updateStage(.transcribingSpeech, progress: 0.35)
+        updateStage(.transcribingSpeech, progress: 0.3)
 
         if SpeechTranscriber.isAvailable {
             do {
@@ -136,38 +130,93 @@ class PostRecordingProcessor: ObservableObject {
                     print("  🎙️ Transcribed: \"\(String(transcript.fullText.prefix(80)))...\"")
                 }
 
-                updateStage(.transcribingSpeech, progress: 0.5)
+                updateStage(.transcribingSpeech, progress: 0.4)
             } catch {
                 print("  ⚠️ Speech transcription failed: \(error.localizedDescription)")
-                // Non-fatal — continue without transcript
             }
         } else {
             print("  🎙️ Speech recognition not available — skipping transcription")
         }
 
-        // Stage 4: AI Step Generation (if configured)
+        // Stage 4: Aggregate events
+        updateStage(.aggregatingEvents, progress: 0.45)
+
+        let aggregatedActions: [AggregatedAction]
+        if !events.isEmpty {
+            aggregatedActions = eventAggregator.aggregate(
+                events: events,
+                transcript: session.transcript
+            )
+            session.aggregatedActions = aggregatedActions
+        } else {
+            aggregatedActions = []
+        }
+
+        updateStage(.aggregatingEvents, progress: 0.5)
+
+        // Stage 5: AI Step Generation (if configured)
         let aiManager = AIProviderManager.shared
         if aiManager.isAIEnabled, let aiService = aiManager.makeService() {
-            // Create a fresh StepGenerator with the active provider
             let generator = StepGenerator(aiService: aiService)
             updateStage(.generatingSteps, progress: 0.55)
 
             do {
-                let workflow = try await generator.generate(from: session, framesDirectory: framesDir)
+                let workflow = try await generator.generate(
+                    from: session,
+                    framesDirectory: framesDir,
+                    aggregatedActions: aggregatedActions.isEmpty ? nil : aggregatedActions
+                )
                 lastWorkflow = workflow
 
                 // Save workflow JSON alongside the recording
-                let baseName = (videoURL.deletingPathExtension().lastPathComponent)
+                let baseName = videoURL.deletingPathExtension().lastPathComponent
                 let _ = try workflow.save(
                     in: videoURL.deletingLastPathComponent(),
                     baseName: baseName
                 )
 
-                updateStage(.generatingSteps, progress: 0.85)
+                updateStage(.generatingSteps, progress: 0.75)
                 print("  🧠 AI generated \(workflow.steps.count) steps: \"\(workflow.title)\"")
+
+                // Stage 6: Annotate frames with bounding boxes
+                updateStage(.annotatingFrames, progress: 0.8)
+
+                if !aggregatedActions.isEmpty {
+                    let annotationMap = frameAnnotator.annotateAllFrames(
+                        steps: workflow.steps,
+                        actions: aggregatedActions,
+                        framesDirectory: framesDir
+                    )
+
+                    // Update workflow steps with annotated screenshot references
+                    if !annotationMap.isEmpty, var updatedWorkflow = lastWorkflow {
+                        var updatedSteps = updatedWorkflow.steps
+                        for i in updatedSteps.indices {
+                            if let original = updatedSteps[i].screenshotFile,
+                               let annotated = annotationMap[original] {
+                                updatedSteps[i].annotatedScreenshotFile = annotated
+                            }
+                        }
+                        updatedWorkflow = GeneratedWorkflow(
+                            title: updatedWorkflow.title,
+                            summary: updatedWorkflow.summary,
+                            steps: updatedSteps,
+                            aiAgentPrompt: updatedWorkflow.aiAgentPrompt,
+                            modelUsed: updatedWorkflow.modelUsed
+                        )
+                        lastWorkflow = updatedWorkflow
+
+                        // Re-save workflow with annotation references
+                        let _ = try? updatedWorkflow.save(
+                            in: videoURL.deletingLastPathComponent(),
+                            baseName: baseName
+                        )
+                        print("  🎨 Updated workflow with \(annotationMap.count) annotated frames")
+                    }
+                }
+
             } catch {
                 print("  ⚠️ AI step generation failed: \(error.localizedDescription)")
-                // Non-fatal — session is still saved without AI steps
             }
         } else {
             if !aiManager.isAIEnabled {
@@ -177,7 +226,7 @@ class PostRecordingProcessor: ObservableObject {
             }
         }
 
-        // Stage 5: Save session
+        // Stage 7: Save session
         updateStage(.buildingSession, progress: 0.9)
 
         session.processingState = .completed
@@ -207,7 +256,7 @@ class PostRecordingProcessor: ObservableObject {
     // MARK: - Re-process
 
     /// Re-process an existing recording with the current AI provider.
-    /// Reuses existing frames (skips extraction), re-runs AI, saves updated workflow.
+    /// Re-aggregates events, re-runs AI, annotates frames, saves updated workflow.
     func reprocess(videoURL: URL, baseDirectory: URL) async {
         isProcessing = true
         progress = 0
@@ -222,16 +271,43 @@ class PostRecordingProcessor: ObservableObject {
         guard let sessionData = try? Data(contentsOf: sessionURL),
               var session = try? decoder.decode(RecordingSession.self, from: sessionData) else {
             print("⚠️ Cannot re-process: no session file found for \(baseName)")
-            // If no session exists, fall through to full process
             _ = await process(videoURL: videoURL, metadataURL: nil, duration: 0)
             return
         }
 
         print("🔄 Re-processing: \(baseName)")
 
-        // Use existing frames directory
         let framesDir = baseDirectory
             .appendingPathComponent(session.framesDirectory ?? "\(baseName)_frames", isDirectory: true)
+
+        // Re-aggregate events if we have raw events or metadata
+        updateStage(.aggregatingEvents, progress: 0.1)
+
+        var events: [InteractionEvent] = session.rawEvents ?? []
+
+        // If no raw events in session, try loading from metadata file
+        if events.isEmpty, let metadataFile = session.metadataFile {
+            let metadataURL = baseDirectory.appendingPathComponent(metadataFile)
+            if let data = try? Data(contentsOf: metadataURL) {
+                let metaDecoder = JSONDecoder()
+                metaDecoder.dateDecodingStrategy = .iso8601
+                if let metadata = try? metaDecoder.decode(RecordingMetadata.self, from: data) {
+                    events = metadata.events
+                }
+            }
+        }
+
+        let aggregatedActions: [AggregatedAction]
+        if !events.isEmpty {
+            aggregatedActions = eventAggregator.aggregate(
+                events: events,
+                transcript: session.transcript
+            )
+            session.aggregatedActions = aggregatedActions
+            session.rawEvents = events
+        } else {
+            aggregatedActions = session.aggregatedActions ?? []
+        }
 
         updateStage(.generatingSteps, progress: 0.2)
 
@@ -247,16 +323,49 @@ class PostRecordingProcessor: ObservableObject {
         let generator = StepGenerator(aiService: aiService)
 
         do {
-            let workflow = try await generator.generate(from: session, framesDirectory: framesDir)
+            let workflow = try await generator.generate(
+                from: session,
+                framesDirectory: framesDir,
+                aggregatedActions: aggregatedActions.isEmpty ? nil : aggregatedActions
+            )
             lastWorkflow = workflow
 
-            // Save updated workflow JSON (overwrites previous)
+            // Save updated workflow JSON
             let _ = try workflow.save(in: baseDirectory, baseName: baseName)
+
+            updateStage(.annotatingFrames, progress: 0.7)
+
+            // Re-annotate frames
+            if !aggregatedActions.isEmpty {
+                let annotationMap = frameAnnotator.annotateAllFrames(
+                    steps: workflow.steps,
+                    actions: aggregatedActions,
+                    framesDirectory: framesDir
+                )
+
+                if !annotationMap.isEmpty {
+                    var updatedSteps = workflow.steps
+                    for i in updatedSteps.indices {
+                        if let original = updatedSteps[i].screenshotFile,
+                           let annotated = annotationMap[original] {
+                            updatedSteps[i].annotatedScreenshotFile = annotated
+                        }
+                    }
+                    let updatedWorkflow = GeneratedWorkflow(
+                        title: workflow.title,
+                        summary: workflow.summary,
+                        steps: updatedSteps,
+                        aiAgentPrompt: workflow.aiAgentPrompt,
+                        modelUsed: workflow.modelUsed
+                    )
+                    lastWorkflow = updatedWorkflow
+                    let _ = try? updatedWorkflow.save(in: baseDirectory, baseName: baseName)
+                }
+            }
 
             updateStage(.generatingSteps, progress: 0.9)
             print("  🧠 Re-generated \(workflow.steps.count) steps: \"\(workflow.title)\"")
 
-            // Update session processing state
             session.processingState = .completed
             let _ = try session.save(in: baseDirectory)
 

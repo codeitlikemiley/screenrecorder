@@ -143,6 +143,17 @@ struct MenuBarView: View {
                 }
             }
 
+            // Annotation mode (works independently of recording)
+            Divider()
+            Toggle("✏️ Annotation Mode  ⌘⇧D", isOn: $appState.isAnnotationModeActive)
+            Button("🗑 Clear Annotations  ⌘⇧X") {
+                appState.annotationState.clearAll()
+            }
+            .disabled(!appState.annotationState.hasContent)
+            Button("📸 Screenshot  ⌘⇧3") {
+                coordinator.captureAnnotationScreenshot()
+            }
+
             Divider()
 
             Button("📂 Open Recordings  ⌘⇧F") {

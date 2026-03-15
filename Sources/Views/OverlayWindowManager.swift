@@ -9,8 +9,13 @@ import Combine
 class OverlayWindowManager {
     private var keystrokeWindow: NSWindow?
     private var cameraWindow: NSWindow?
+    private var annotationWindow: NSWindow?
+    private var annotationToolbarWindow: NSWindow?
     private var cancellables = Set<AnyCancellable>()
     private var windowMoveObserver: Any?
+
+    /// Callback for annotation screenshot — set by RecordingCoordinator
+    var onAnnotationScreenshot: (() -> Void)?
 
     weak var appState: AppState?
     weak var cameraManager: CameraManager?
@@ -72,6 +77,32 @@ class OverlayWindowManager {
                     self?.showVolumeHUD()
                 } else {
                     self?.volumeWindow?.orderOut(nil)
+                }
+            }
+            .store(in: &cancellables)
+
+        // Observe annotation mode toggle
+        appState.$isAnnotationModeActive
+            .receive(on: RunLoop.main)
+            .sink { [weak self] active in
+                if active {
+                    self?.showAnnotationOverlay()
+                    self?.setAnnotationInteractive(true)
+                } else {
+                    self?.setAnnotationInteractive(false)
+                    self?.hideAnnotationToolbar()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Observe annotation visibility toggle
+        appState.$isAnnotationVisible
+            .receive(on: RunLoop.main)
+            .sink { [weak self] visible in
+                if visible {
+                    self?.annotationWindow?.alphaValue = 1.0
+                } else {
+                    self?.annotationWindow?.alphaValue = 0.0
                 }
             }
             .store(in: &cancellables)
@@ -339,6 +370,150 @@ class OverlayWindowManager {
         keystrokeWindow = nil
         cameraWindow?.orderOut(nil)
         cameraWindow = nil
+        annotationWindow?.orderOut(nil)
+        annotationWindow = nil
+        annotationToolbarWindow?.orderOut(nil)
+        annotationToolbarWindow = nil
         cancellables.removeAll()
+    }
+
+    // MARK: - Annotation Overlay Window
+
+    func showAnnotationOverlay() {
+        guard let appState = appState else { return }
+
+        if annotationWindow == nil {
+            createAnnotationWindow(appState: appState)
+        }
+
+        annotationWindow?.orderFrontRegardless()
+        showAnnotationToolbar()
+    }
+
+    func hideAnnotationOverlay() {
+        annotationWindow?.orderOut(nil)
+        annotationWindow = nil
+        hideAnnotationToolbar()
+    }
+
+    /// Toggle the annotation window between interactive (drawing) and click-through (passthrough) modes
+    func setAnnotationInteractive(_ active: Bool) {
+        guard let window = annotationWindow else {
+            // If activating and no window exists yet, create it
+            if active { showAnnotationOverlay() }
+            return
+        }
+
+        if active {
+            window.ignoresMouseEvents = false
+            window.level = .screenSaver
+            // Ensure the window accepts input — make it key
+            window.makeKey()
+            showAnnotationToolbar()
+        } else {
+            window.ignoresMouseEvents = true
+            window.level = .floating
+            hideAnnotationToolbar()
+        }
+    }
+
+    private func createAnnotationWindow(appState: AppState) {
+        guard let screen = NSScreen.main else { return }
+
+        let screenFrame = screen.frame
+
+        let canvasView = AnnotationCanvasView(annotationState: appState.annotationState)
+        let hostingView = NSHostingView(rootView: canvasView)
+        hostingView.frame = NSRect(x: 0, y: 0, width: screenFrame.width, height: screenFrame.height)
+
+        let window = NSWindow(
+            contentRect: screenFrame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+
+        window.level = .screenSaver       // Above everything
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.ignoresMouseEvents = false  // Start interactive
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        window.isReleasedWhenClosed = false
+
+        // CRITICAL: .readOnly makes annotations appear in screen recording
+        window.sharingType = .readOnly
+
+        window.contentView = hostingView
+        annotationWindow = window
+    }
+
+    // MARK: - Annotation Toolbar Window
+
+    private func showAnnotationToolbar() {
+        guard let appState = appState, let screen = NSScreen.main else { return }
+
+        if annotationToolbarWindow == nil {
+            createAnnotationToolbarWindow(appState: appState)
+        }
+
+        // Position at top center of screen
+        let screenFrame = screen.visibleFrame
+        let toolbarSize = annotationToolbarWindow!.frame.size
+        let x = screenFrame.midX - toolbarSize.width / 2
+        let y = screenFrame.maxY - toolbarSize.height - 10
+        annotationToolbarWindow?.setFrameOrigin(NSPoint(x: x, y: y))
+        annotationToolbarWindow?.orderFrontRegardless()
+    }
+
+    private func hideAnnotationToolbar() {
+        annotationToolbarWindow?.orderOut(nil)
+    }
+
+    /// Public: temporarily hide toolbar for screenshot capture
+    func hideAnnotationToolbarForCapture() {
+        annotationToolbarWindow?.orderOut(nil)
+    }
+
+    /// Public: re-show toolbar after screenshot capture
+    func showAnnotationToolbarAfterCapture() {
+        showAnnotationToolbar()
+    }
+
+    private func createAnnotationToolbarWindow(appState: AppState) {
+        let toolbarView = AnnotationToolbar(
+            annotationState: appState.annotationState,
+            onClose: { [weak self] in
+                self?.appState?.isAnnotationModeActive = false
+            },
+            onClear: { [weak self] in
+                self?.appState?.annotationState.clearAll()
+            },
+            onScreenshot: { [weak self] in
+                self?.onAnnotationScreenshot?()
+            }
+        )
+
+        let hostingView = NSHostingView(rootView: toolbarView)
+        let contentSize = hostingView.fittingSize
+
+        let window = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: contentSize.width, height: contentSize.height),
+            styleMask: [.nonactivatingPanel, .borderless],
+            backing: .buffered,
+            defer: false
+        )
+
+        window.level = .screenSaver + 1  // Above annotation canvas
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.isMovableByWindowBackground = true
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.isReleasedWhenClosed = false
+        window.sharingType = .none  // Don't capture the toolbar itself
+
+        window.contentView = hostingView
+        annotationToolbarWindow = window
     }
 }

@@ -15,6 +15,27 @@ struct ScreenshotPreview: View {
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
 
+                // Annotated/Original toggle
+                if model.selectedStep?.annotatedScreenshotFile != nil {
+                    Button {
+                        model.showAnnotated.toggle()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: model.showAnnotated ? "target" : "photo")
+                                .font(.system(size: 10))
+                            Text(model.showAnnotated ? "Annotated" : "Original")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .fill(model.showAnnotated ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.1))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 if let step = model.selectedStep {
                     Text(formatTimestamp(step.timestampStart))
                         .font(.system(size: 11, design: .monospaced))

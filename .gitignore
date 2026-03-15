@@ -33,3 +33,6 @@ learnings/
 
 # Stow directory (managed separately)
 .stow/
+
+# Epics (private roadmap ideas)
+EPICS/

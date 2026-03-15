@@ -171,6 +171,17 @@ struct LibraryView: View {
 
             // Actions
             HStack(spacing: 6) {
+                // Play video
+                Button {
+                    NSWorkspace.shared.open(entry.videoURL)
+                } label: {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 13))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Play Original Video")
+
                 // Open
                 Button {
                     openSession(entry)

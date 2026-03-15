@@ -69,6 +69,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let dir = appState?.saveDirectory else { return }
             LibraryWindowManager.shared.open(directory: dir)
         }
+        manager.onToggleAnnotation = { [weak coordinator] in
+            coordinator?.toggleAnnotationMode()
+        }
+        manager.onClearAnnotations = { [weak coordinator] in
+            coordinator?.clearAnnotations()
+        }
+        manager.onAnnotationScreenshot = { [weak coordinator] in
+            coordinator?.captureAnnotationScreenshot()
+        }
 
         manager.registerHotkeys()
         hotkeyManager = manager

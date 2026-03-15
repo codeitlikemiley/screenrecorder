@@ -57,15 +57,39 @@ open .build/ScreenRecorder.app
 
 All hotkeys are customizable in **Settings → Shortcuts**.
 
+### Recording & Capture
+
 | Default Shortcut | Action |
 |------------------|--------|
-| `⌘⇧S` | Start / Stop recording |
+| `⌘⇧4` | Start / Stop recording |
+| `⌘⇧S` | Start / Stop recording (alt) |
+| `⌘⇧3` | Annotation screenshot (save to file) |
+| `⌘⇧⌥3` | Annotation screenshot (alt) |
 | `⌘⇧C` | Toggle camera |
 | `⌘⇧M` | Toggle microphone |
 | `⌘⇧K` | Toggle keystroke overlay |
 | `⌘⇧H` | Show / Hide control bar |
 | `⌘⇧F` | Open recordings folder |
 | `⌘,` | Open settings |
+
+### Annotation (Doodle Mode)
+
+| Default Shortcut | Action |
+|------------------|--------|
+| `⌘⇧D` | Toggle annotation mode |
+| `⌘⇧X` | Clear annotations |
+| `⌘1` | Pen tool |
+| `⌘2` | Line tool |
+| `⌘3` | Arrow tool |
+| `⌘4` | Rectangle tool |
+| `⌘5` | Ellipse tool |
+
+> ⚠️ **macOS Screenshot Conflict:**
+> `⌘⇧3` and `⌘⇧4` conflict with macOS default screenshot shortcuts. Each has an alt fallback (`⌘⇧S` and `⌘⇧⌥3`) that works without changes. For the best experience, disable the macOS defaults:
+>
+> **System Settings → Keyboard → Keyboard Shortcuts → Screenshots** → uncheck `⌘⇧3`, `⌘⇧4`, and `⌘⇧5`.
+>
+> All shortcuts are customizable in the app's **Settings → Shortcuts**.
 
 ## AI Step Generation
 
