@@ -163,6 +163,23 @@ final class GlobalHotkeyManager {
         KeyboardShortcuts.onKeyDown(for: .toolEllipse) { [weak self] in
             self?.appState?.annotationState.selectedTool = .ellipse
         }
+        KeyboardShortcuts.onKeyDown(for: .toolText) { [weak self] in
+            self?.appState?.annotationState.selectedTool = .text
+        }
+
+        // ⌘Z — Undo Annotation
+        KeyboardShortcuts.onKeyDown(for: .annotationUndo) { [weak self] in
+            guard let self, let state = self.appState,
+                  state.isAnnotationModeActive else { return }
+            state.annotationState.undo()
+        }
+
+        // ⌘⇧Z — Redo Annotation
+        KeyboardShortcuts.onKeyDown(for: .annotationRedo) { [weak self] in
+            guard let self, let state = self.appState,
+                  state.isAnnotationModeActive else { return }
+            state.annotationState.redo()
+        }
     }
 
     // MARK: - Unregister
