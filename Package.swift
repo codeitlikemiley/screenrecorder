@@ -15,7 +15,7 @@ let package = Package(
             name: "ScreenRecorder",
             dependencies: ["KeyboardShortcuts"],
             path: "Sources",
-            exclude: ["CLI"],
+            exclude: ["CLI", "MCP"],
             linkerSettings: [
                 .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("AVFoundation"),
@@ -31,6 +31,10 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/CLI"
+        ),
+        .executableTarget(
+            name: "sr-mcp",
+            path: "Sources/MCP"
         ),
     ]
 )

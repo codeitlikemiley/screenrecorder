@@ -183,6 +183,8 @@ struct AnnotationCanvasView: View {
             drawEllipse(stroke, style: strokeStyle, in: &context)
         case .text:
             drawText(stroke, in: &context)
+        case .move:
+            break // Move tool doesn't draw — strokes keep their original tool type
         }
     }
 
