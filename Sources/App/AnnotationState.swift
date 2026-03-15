@@ -105,6 +105,12 @@ class AnnotationState: ObservableObject {
     @Published var selectedColor: Color = .red
     @Published var lineWidth: CGFloat = 3.0
 
+    // MARK: - Text Editing State
+    @Published var isEditingText: Bool = false
+    @Published var editingTextPosition: CGPoint = .zero
+    @Published var editingTextContent: String = ""
+    @Published var textFontSize: CGFloat = 24.0
+
     // MARK: - Drawing Actions
 
     /// Begin a new stroke at the given point
@@ -167,6 +173,43 @@ class AnnotationState: ObservableObject {
         strokes.removeAll()
         undoneStrokes.removeAll()
         currentStroke = nil
+    }
+
+    // MARK: - Text Input
+
+    /// Start text editing at a position (called when clicking with text tool)
+    func beginTextEditing(at point: CGPoint) {
+        editingTextPosition = point
+        editingTextContent = ""
+        isEditingText = true
+    }
+
+    /// Commit the current text as a stroke
+    func commitText() {
+        guard isEditingText, !editingTextContent.trimmingCharacters(in: .whitespaces).isEmpty else {
+            isEditingText = false
+            editingTextContent = ""
+            return
+        }
+
+        let stroke = AnnotationStroke(
+            tool: .text,
+            points: [editingTextPosition],
+            color: selectedColor,
+            lineWidth: textFontSize,
+            textContent: editingTextContent
+        )
+        strokes.append(stroke)
+        undoneStrokes.removeAll()
+
+        isEditingText = false
+        editingTextContent = ""
+    }
+
+    /// Cancel text editing without committing
+    func cancelTextEditing() {
+        isEditingText = false
+        editingTextContent = ""
     }
 
     // MARK: - State Queries

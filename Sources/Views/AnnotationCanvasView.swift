@@ -5,6 +5,7 @@ import SwiftUI
 /// Handles mouse/trackpad input via DragGesture.
 struct AnnotationCanvasView: View {
     @ObservedObject var annotationState: AnnotationState
+    @FocusState private var isTextFieldFocused: Bool
 
     var body: some View {
         GeometryReader { geometry in
@@ -23,24 +24,94 @@ struct AnnotationCanvasView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                // Invisible overlay to capture drag gestures
+                // Gesture overlay
                 Color.clear
                     .contentShape(Rectangle())
                     .gesture(
-                        DragGesture(minimumDistance: 1, coordinateSpace: .local)
+                        DragGesture(minimumDistance: 0, coordinateSpace: .local)
                             .onChanged { value in
+                                if annotationState.selectedTool == .text {
+                                    // Single click to place text — handled in onEnded
+                                    return
+                                }
                                 if annotationState.currentStroke == nil {
                                     annotationState.beginStroke(at: value.startLocation)
                                 }
                                 annotationState.continueStroke(to: value.location)
                             }
-                            .onEnded { _ in
-                                annotationState.endStroke()
+                            .onEnded { value in
+                                if annotationState.selectedTool == .text {
+                                    // Commit any existing text first
+                                    if annotationState.isEditingText {
+                                        annotationState.commitText()
+                                    }
+                                    // Start new text editing at click location
+                                    annotationState.beginTextEditing(at: value.location)
+                                    isTextFieldFocused = true
+                                } else {
+                                    annotationState.endStroke()
+                                }
                             }
                     )
+
+                // Inline text editing field
+                if annotationState.isEditingText {
+                    textInputField
+                        .position(
+                            x: annotationState.editingTextPosition.x + 100,
+                            y: annotationState.editingTextPosition.y
+                        )
+                }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
+    }
+
+    // MARK: - Text Input Field
+
+    private var textInputField: some View {
+        HStack(spacing: 4) {
+            TextField("Type annotation...", text: $annotationState.editingTextContent)
+                .textFieldStyle(.plain)
+                .font(.system(size: annotationState.textFontSize, weight: .semibold))
+                .foregroundColor(annotationState.selectedColor)
+                .focused($isTextFieldFocused)
+                .frame(minWidth: 200, maxWidth: 400)
+                .onSubmit {
+                    annotationState.commitText()
+                    isTextFieldFocused = false
+                }
+
+            Button {
+                annotationState.commitText()
+                isTextFieldFocused = false
+            } label: {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundColor(.green)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                annotationState.cancelTextEditing()
+                isTextFieldFocused = false
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundColor(.red.opacity(0.8))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.black.opacity(0.75))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(annotationState.selectedColor.opacity(0.6), lineWidth: 1.5)
+                )
+        )
     }
 
     // MARK: - Stroke Rendering
