@@ -162,6 +162,32 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Upload to Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          # Skip if R2 credentials are not configured
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "ℹ️ R2 not configured — skipping upload"
+            exit 0
+          fi
+
+          R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+          # Install AWS CLI if not available
+          which aws || brew install awscli
+
+          # Upload DMG to R2
+          aws s3 cp ".build/${DMG_NAME}" \
+            "s3://${R2_BUCKET}/releases/${DMG_NAME}" \
+            --endpoint-url "${R2_ENDPOINT}"
+
+          echo "✅ Uploaded ${DMG_NAME} to R2"
+
       - name: Cleanup keychain
         if: always()
         run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
