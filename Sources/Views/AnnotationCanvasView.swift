@@ -24,14 +24,29 @@ struct AnnotationCanvasView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+                // Selection highlight for move mode
+                if annotationState.selectedTool == .move,
+                   let selectedIndex = annotationState.selectedStrokeIndex,
+                   selectedIndex < annotationState.strokes.count {
+                    let stroke = annotationState.strokes[selectedIndex]
+                    selectionHighlight(for: stroke)
+                }
+
                 // Gesture overlay
                 Color.clear
                     .contentShape(Rectangle())
                     .gesture(
                         DragGesture(minimumDistance: 0, coordinateSpace: .local)
                             .onChanged { value in
+                                if annotationState.selectedTool == .move {
+                                    if annotationState.dragStartPoint == nil {
+                                        annotationState.beginMove(at: value.startLocation)
+                                    } else {
+                                        annotationState.continueMove(to: value.location)
+                                    }
+                                    return
+                                }
                                 if annotationState.selectedTool == .text {
-                                    // Single click to place text — handled in onEnded
                                     return
                                 }
                                 if annotationState.currentStroke == nil {
@@ -40,12 +55,12 @@ struct AnnotationCanvasView: View {
                                 annotationState.continueStroke(to: value.location)
                             }
                             .onEnded { value in
-                                if annotationState.selectedTool == .text {
-                                    // Commit any existing text first
+                                if annotationState.selectedTool == .move {
+                                    annotationState.endMove()
+                                } else if annotationState.selectedTool == .text {
                                     if annotationState.isEditingText {
                                         annotationState.commitText()
                                     }
-                                    // Start new text editing at click location
                                     annotationState.beginTextEditing(at: value.location)
                                     isTextFieldFocused = true
                                 } else {
@@ -64,7 +79,39 @@ struct AnnotationCanvasView: View {
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
+            .onChange(of: annotationState.selectedTool) { _, newTool in
+                if newTool != .move {
+                    annotationState.deselectStroke()
+                }
+                if newTool != .text && annotationState.isEditingText {
+                    annotationState.commitText()
+                    isTextFieldFocused = false
+                }
+            }
         }
+    }
+
+    // MARK: - Selection Highlight
+
+    @ViewBuilder
+    private func selectionHighlight(for stroke: AnnotationStroke) -> some View {
+        let bounds = strokeBounds(stroke)
+        let padding: CGFloat = 8
+        RoundedRectangle(cornerRadius: 4)
+            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 3]))
+            .foregroundColor(.white.opacity(0.7))
+            .frame(width: bounds.width + padding * 2, height: bounds.height + padding * 2)
+            .position(x: bounds.midX, y: bounds.midY)
+            .allowsHitTesting(false)
+    }
+
+    private func strokeBounds(_ stroke: AnnotationStroke) -> CGRect {
+        guard !stroke.points.isEmpty else { return .zero }
+        let xs = stroke.points.map(\.x)
+        let ys = stroke.points.map(\.y)
+        let minX = xs.min()!, maxX = xs.max()!
+        let minY = ys.min()!, maxY = ys.max()!
+        return CGRect(x: minX, y: minY, width: max(maxX - minX, 20), height: max(maxY - minY, 20))
     }
 
     // MARK: - Text Input Field

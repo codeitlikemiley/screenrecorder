@@ -166,6 +166,9 @@ final class GlobalHotkeyManager {
         KeyboardShortcuts.onKeyDown(for: .toolText) { [weak self] in
             self?.appState?.annotationState.selectedTool = .text
         }
+        KeyboardShortcuts.onKeyDown(for: .toolMove) { [weak self] in
+            self?.appState?.annotationState.selectedTool = .move
+        }
 
         // ⌘Z — Undo Annotation
         KeyboardShortcuts.onKeyDown(for: .annotationUndo) { [weak self] in

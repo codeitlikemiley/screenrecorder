@@ -26,6 +26,7 @@ extension KeyboardShortcuts.Name {
     static let toolRectangle = Self("toolRectangle", default: .init(.four, modifiers: [.command]))
     static let toolEllipse = Self("toolEllipse", default: .init(.five, modifiers: [.command]))
     static let toolText = Self("toolText", default: .init(.six, modifiers: [.command]))
+    static let toolMove = Self("toolMove", default: .init(.seven, modifiers: [.command]))
     static let annotationUndo = Self("annotationUndo", default: .init(.z, modifiers: [.command]))
     static let annotationRedo = Self("annotationRedo", default: .init(.z, modifiers: [.command, .shift]))
 }
@@ -55,6 +56,7 @@ extension KeyboardShortcuts.Name: @retroactive CaseIterable {
         .toolRectangle,
         .toolEllipse,
         .toolText,
+        .toolMove,
         .annotationUndo,
         .annotationRedo,
     ]
@@ -85,6 +87,7 @@ extension KeyboardShortcuts.Name {
         "toolRectangle": "Rectangle Tool",
         "toolEllipse": "Ellipse Tool",
         "toolText": "Text Tool",
+        "toolMove": "Move Tool",
         "annotationUndo": "Undo Annotation",
         "annotationRedo": "Redo Annotation",
     ]

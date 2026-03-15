@@ -9,6 +9,7 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
     case rectangle
     case ellipse
     case text
+    case move
 
     var id: String { rawValue }
 
@@ -20,6 +21,7 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
         case .rectangle: return "rectangle"
         case .ellipse: return "circle"
         case .text: return "textformat"
+        case .move: return "arrow.up.and.down.and.arrow.left.and.right"
         }
     }
 
@@ -31,6 +33,7 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
         case .rectangle: return "Rectangle"
         case .ellipse: return "Ellipse"
         case .text: return "Text"
+        case .move: return "Move"
         }
     }
 
@@ -42,7 +45,13 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
         case .rectangle: return "⌘4"
         case .ellipse: return "⌘5"
         case .text: return "⌘6"
+        case .move: return "⌘7"
         }
+    }
+
+    /// Whether this tool is a drawing tool (vs utility like move)
+    var isDrawingTool: Bool {
+        self != .move
     }
 }
 
@@ -110,6 +119,10 @@ class AnnotationState: ObservableObject {
     @Published var editingTextPosition: CGPoint = .zero
     @Published var editingTextContent: String = ""
     @Published var textFontSize: CGFloat = 24.0
+
+    // MARK: - Move Mode State
+    @Published var selectedStrokeIndex: Int? = nil
+    @Published var dragStartPoint: CGPoint? = nil
 
     // MARK: - Drawing Actions
 
@@ -210,6 +223,69 @@ class AnnotationState: ObservableObject {
     func cancelTextEditing() {
         isEditingText = false
         editingTextContent = ""
+    }
+
+    // MARK: - Move Mode
+
+    /// Find the stroke closest to the given point (within threshold)
+    func hitTestStroke(at point: CGPoint, threshold: CGFloat = 20) -> Int? {
+        // Search in reverse order (top-most stroke first)
+        for i in stride(from: strokes.count - 1, through: 0, by: -1) {
+            let stroke = strokes[i]
+            for strokePoint in stroke.points {
+                let distance = hypot(strokePoint.x - point.x, strokePoint.y - point.y)
+                if distance <= threshold {
+                    return i
+                }
+            }
+            // For shapes, also check bounding rect edges
+            if let rect = stroke.boundingRect {
+                let expanded = rect.insetBy(dx: -threshold, dy: -threshold)
+                if expanded.contains(point) {
+                    return i
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Begin moving a stroke
+    func beginMove(at point: CGPoint) {
+        if let index = hitTestStroke(at: point) {
+            selectedStrokeIndex = index
+            dragStartPoint = point
+        } else {
+            selectedStrokeIndex = nil
+            dragStartPoint = nil
+        }
+    }
+
+    /// Continue moving the selected stroke
+    func continueMove(to point: CGPoint) {
+        guard let index = selectedStrokeIndex,
+              let start = dragStartPoint,
+              index < strokes.count else { return }
+
+        let dx = point.x - start.x
+        let dy = point.y - start.y
+
+        // Translate all points
+        strokes[index].points = strokes[index].points.map { p in
+            CGPoint(x: p.x + dx, y: p.y + dy)
+        }
+
+        dragStartPoint = point
+    }
+
+    /// End the move operation
+    func endMove() {
+        selectedStrokeIndex = nil
+        dragStartPoint = nil
+    }
+
+    /// Deselect the currently selected stroke
+    func deselectStroke() {
+        selectedStrokeIndex = nil
     }
 
     // MARK: - State Queries
