@@ -70,6 +70,18 @@ jobs:
             exit 1
           fi
 
+      - name: Build CLI and MCP server
+        run: |
+          swift build -c release --product sr
+          swift build -c release --product sr-mcp
+
+          # Copy to .build/ for easy access
+          cp .build/release/sr .build/sr
+          cp .build/release/sr-mcp .build/sr-mcp
+
+          echo "✅ CLI and MCP binaries built"
+          ls -lh .build/sr .build/sr-mcp
+
       - name: Package .app bundle
         run: |
           APP_DIR=".build/release/${APP_NAME}.app"
@@ -159,6 +171,8 @@ jobs:
           generate_release_notes: true
           files: |
             .build/${{ env.DMG_NAME }}
+            .build/sr
+            .build/sr-mcp
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -186,7 +200,16 @@ jobs:
             "s3://${R2_BUCKET}/releases/${DMG_NAME}" \
             --endpoint-url "${R2_ENDPOINT}"
 
-          echo "✅ Uploaded ${DMG_NAME} to R2"
+          # Upload CLI and MCP binaries
+          aws s3 cp ".build/sr" \
+            "s3://${R2_BUCKET}/releases/sr" \
+            --endpoint-url "${R2_ENDPOINT}"
+
+          aws s3 cp ".build/sr-mcp" \
+            "s3://${R2_BUCKET}/releases/sr-mcp" \
+            --endpoint-url "${R2_ENDPOINT}"
+
+          echo "✅ Uploaded DMG, sr, and sr-mcp to R2"
 
       - name: Cleanup keychain
         if: always()

@@ -30,7 +30,7 @@ echo "   Signing:   ${SIGNING_IDENTITY}"
 echo ""
 
 # ─── Step 1: Clean Build ────────────────────────────────────
-echo "🔨 Step 1/6: Building release binary..."
+echo "🔨 Step 1/7: Building release binary..."
 pkill -f "${APP_NAME}" 2>/dev/null || true
 
 xcodebuild -scheme "${APP_NAME}" -configuration Release \
@@ -47,10 +47,15 @@ if [ ! -f "$BINARY" ]; then
     echo "❌ Release build failed"
     exit 1
 fi
-echo "   ✅ Build succeeded"
+echo "   ✅ App build succeeded"
+
+echo "🔧 Building CLI (sr) and MCP server (sr-mcp)..."
+swift build -c release --product sr
+swift build -c release --product sr-mcp
+echo "   ✅ CLI and MCP built"
 
 # ─── Step 2: Package .app ───────────────────────────────────
-echo "🎁 Step 2/6: Packaging .app bundle..."
+echo "🎁 Step 2/7: Packaging .app bundle..."
 CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
@@ -75,7 +80,7 @@ done
 echo "   ✅ App packaged"
 
 # ─── Step 3: Code Sign ─────────────────────────────────────
-echo "🔏 Step 3/6: Signing with Developer ID (hardened runtime)..."
+echo "🔏 Step 3/7: Signing with Developer ID (hardened runtime)..."
 codesign --force --sign "${SIGNING_IDENTITY}" \
   --options runtime \
   --entitlements Resources/ScreenRecorder.entitlements \
@@ -89,7 +94,7 @@ codesign --verify --verbose=2 "${APP_DIR}" 2>&1
 echo "   ✅ Signed and verified"
 
 # ─── Step 4: Notarize ──────────────────────────────────────
-echo "📤 Step 4/6: Submitting for notarization..."
+echo "📤 Step 4/7: Submitting for notarization..."
 ZIP_PATH=".build/${APP_NAME}-notarize.zip"
 ditto -c -k --keepParent "${APP_DIR}" "${ZIP_PATH}"
 
@@ -102,12 +107,12 @@ xcrun notarytool submit "${ZIP_PATH}" \
 echo "   ✅ Notarization approved"
 
 # ─── Step 5: Staple ────────────────────────────────────────
-echo "📎 Step 5/6: Stapling notarization ticket..."
+echo "📎 Step 5/7: Stapling notarization ticket..."
 xcrun stapler staple "${APP_DIR}"
 echo "   ✅ Ticket stapled"
 
 # ─── Step 6: Create DMG ────────────────────────────────────
-echo "💿 Step 6/6: Creating DMG..."
+echo "💿 Step 6/7: Creating DMG..."
 rm -f ".build/${DMG_NAME}"
 
 # Stage the app in a clean temp directory
@@ -141,6 +146,7 @@ echo "   ✅ DMG created"
 
 # ─── Step 7: Git Tag & Push ─────────────────────────────────
 echo "🏷️  Step 7/7: Tagging v${VERSION} and pushing..."
+
 git add Resources/Info.plist
 git diff --cached --quiet || git commit -m "release: v${VERSION}"
 git tag -f "v${VERSION}"
@@ -154,5 +160,7 @@ echo "  ✅ ${APP_NAME} v${VERSION} is ready for distribution!"
 echo ""
 echo "  📦 App:  ${APP_DIR}"
 echo "  💿 DMG:  .build/${DMG_NAME}"
+echo "  🔧 CLI:  .build/release/sr"
+echo "  🔌 MCP:  .build/release/sr-mcp"
 echo "  🏷️  Tag:  v${VERSION}"
 echo "═══════════════════════════════════════════════════════"
