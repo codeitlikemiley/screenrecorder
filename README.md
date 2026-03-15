@@ -194,6 +194,111 @@ Access all past recordings from the menu bar via **📚 Recording Library**.
   <img src="docs/images/recording-library.png" width="600" alt="Recording Library">
 </p>
 
+## MCP Server (AI Tool Integration)
+
+Screen Recorder includes an **MCP server** (`sr-mcp`) that lets AI assistants (Claude Code, Cursor, Windsurf, etc.) control the app programmatically — start/stop recording, take screenshots, draw annotations, and more.
+
+### Setup
+
+1. **Build the MCP binary:**
+
+   ```bash
+   swift build
+   # Binary is at .build/debug/sr-mcp
+   ```
+
+2. **Activate your license:**
+
+   ```bash
+   sr-mcp activate SR-XXXX-XXXX-XXXX-XXXX
+   ```
+
+   Get a license key at [screenrecorder.dev](https://screenrecorder.dev). Free tier includes 100 MCP tool calls/day.
+
+3. **Add to your MCP client config:**
+
+   **Claude Code** (`~/.claude/claude_desktop_config.json`):
+
+   ```json
+   {
+     "mcpServers": {
+       "screen-recorder": {
+         "command": "/path/to/sr-mcp",
+         "args": ["serve"]
+       }
+     }
+   }
+   ```
+
+   **Cursor** (`.cursor/mcp.json`):
+
+   ```json
+   {
+     "mcpServers": {
+       "screen-recorder": {
+         "command": "/path/to/sr-mcp",
+         "args": ["serve"]
+       }
+     }
+   }
+   ```
+
+4. **Make sure Screen Recorder is running** — the MCP server proxies tool calls to the app via its local JSON-RPC server.
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_status` | Get current recording state |
+| `screen_recorder_start` | Start recording |
+| `screen_recorder_stop` | Stop recording |
+| `screen_recorder_screenshot` | Capture a screenshot |
+| `screen_recorder_annotate` | Add, undo, or redo annotations |
+| `screen_recorder_annotate_clear` | Clear all annotations |
+| `screen_recorder_tool` | Select drawing tool (pen, arrow, rectangle, etc.) |
+| `screen_recorder_usage` | Check license plan and daily usage |
+
+### License & Rate Limits
+
+| Plan | Daily Limit | Price |
+|------|------------|-------|
+| Free | 100 tool calls | $0 |
+| Pro | Unlimited | $9/mo |
+
+```bash
+# Check your usage anytime
+sr-mcp usage
+
+# Deactivate license
+sr-mcp deactivate
+```
+
+## CLI
+
+The `sr` binary provides command-line control over Screen Recorder:
+
+```bash
+# Check app status
+sr status
+
+# Start/stop recording
+sr record start
+sr record stop
+
+# Take a screenshot
+sr screenshot --output ~/Desktop/shot.png
+
+# Annotations
+sr annotate add --type arrow --points 100,100,300,200 --color red
+sr annotate undo
+sr annotate clear
+
+# Switch drawing tool
+sr tool select pen
+```
+
+> The `sr` CLI and MCP server both require the Screen Recorder app to be running.
+
 ## Documentation
 
 | Doc | Description |
