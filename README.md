@@ -248,30 +248,95 @@ Access all past recordings from the menu bar via **📚 Recording Library**.
 
 The `sr` binary is bundled inside `ScreenRecorder.app` and installed to `/usr/local/bin/sr` via Homebrew or in-app Settings.
 
+> The `sr` CLI requires the Screen Recorder app to be running.
+
+### License & Status
+
 ```bash
-# Activate your license
-sr activate SR-XXXX-XXXX-XXXX-XXXX
-
-# Check app status
-sr status
-
-# Start/stop recording
-sr record start
-sr record stop
-
-# Take a screenshot
-sr screenshot --output ~/Desktop/shot.png
-
-# Annotations
-sr annotate add --type arrow --points 100,100,300,200 --color red
-sr annotate undo
-sr annotate clear
-
-# Switch drawing tool
-sr tool select pen
+sr activate SR-XXXX-XXXX-XXXX-XXXX   # Activate license
+sr deactivate                         # Remove license
+sr status                             # App state (recording, camera, mic, etc.)
 ```
 
-> The `sr` CLI requires the Screen Recorder app to be running.
+### Recording
+
+```bash
+sr record start                       # Start with current settings
+sr record start --camera --mic        # Enable camera + mic
+sr record start --fps 60              # Set frame rate (15/30/60)
+sr record start --no-camera --no-mic  # Disable camera + mic
+sr record pause                       # Pause recording
+sr record resume                      # Resume recording
+sr record stop                        # Stop and save
+```
+
+### Screenshots
+
+```bash
+sr screenshot                                # Full screen
+sr screenshot --output ~/Desktop/shot.png    # Custom output path
+sr screenshot --window "Safari"              # Capture specific window by name
+sr screenshot --window-id 12345              # Capture by window ID
+sr screenshot --region 100,200,800,600       # Capture region (x,y,w,h)
+sr screenshot --clean                        # Hide annotations during capture
+```
+
+### Annotations
+
+```bash
+sr annotate add --type arrow --points 100,100,300,200 --color red
+sr annotate add --type rectangle --points 50,50,400,300
+sr annotate add --type text --points 200,100 --text "Click here"
+sr annotate undo
+sr annotate redo
+sr annotate clear
+sr annotate list --json                # List strokes with full geometry
+```
+
+### Drawing Tools
+
+```bash
+sr tool select arrow                   # pen, line, arrow, rectangle, ellipse, text, move
+sr tool color red                      # red, green, blue, yellow, or hex #RRGGBB
+sr tool width 5                        # Line width (1-20)
+```
+
+### Screen & Window Awareness
+
+```bash
+sr screen                              # Display info (resolution, scale, frame)
+sr screen --all                        # All displays
+sr windows                             # List all windows
+sr windows --app Safari                # Filter by app name
+sr windows --focused                   # Get focused window
+sr windows --json                      # JSON output
+```
+
+### Element Detection (Vision OCR)
+
+Detect text UI elements using macOS Vision framework. Returns bounding boxes and center points — essential for AI agents placing annotations on non-browser apps (iOS Simulator, desktop apps).
+
+```bash
+sr detect                              # Detect elements on full screen
+sr detect --window "Simulator"         # Detect in a specific window
+sr detect --min-confidence 0.8         # Filter by confidence (0-1)
+sr detect --json                       # JSON output with bounds + centers
+```
+
+### Annotation Sessions
+
+Save, load, and switch between named annotation sets.
+
+```bash
+sr session new "Login Flow"            # Create new session
+sr session new "Bug Report" --from-current  # Copy current annotations
+sr session list                        # List saved sessions
+sr session switch "Login Flow"         # Switch to session (saves current)
+sr session delete "Bug Report"         # Delete session
+sr session save                        # Save current session to disk
+sr session export "Login Flow"         # Print JSON to stdout
+sr session export "Login Flow" -o flow.json  # Save to file
+```
 
 ## MCP Server (AI Tool Integration)
 
@@ -313,16 +378,84 @@ The MCP server (`sr-mcp`) is also bundled inside the app. It lets AI assistants 
 
 ### Available Tools
 
+#### Status & Screen Info
+
 | Tool | Description |
 |------|-------------|
-| `screen_recorder_status` | Get current recording state |
-| `screen_recorder_start` | Start recording |
-| `screen_recorder_stop` | Stop recording |
-| `screen_recorder_screenshot` | Capture a screenshot |
-| `screen_recorder_annotate` | Add, undo, or redo annotations |
+| `screen_recorder_status` | Get current recording state, camera, mic, annotation mode |
+| `screen_recorder_screen_info` | Display resolution, scale factor, visible frame |
+| `screen_recorder_list_windows` | List windows with app name, title, bounds, ID |
+| `screen_recorder_focused_window` | Get the currently focused window |
+
+#### Element Detection
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_detect_elements` | OCR text detection via Vision framework — returns bounding boxes and center points for precise annotation placement |
+
+#### Recording
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_start` | Start recording (options: camera, mic, keystrokes, fps) |
+| `screen_recorder_stop` | Stop recording and save video |
+| `screen_recorder_pause` | Pause recording |
+| `screen_recorder_resume` | Resume recording |
+
+#### Screenshots
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_screenshot` | Capture full screen, region, or window (with/without annotations) |
+
+#### Annotations
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_annotate` | Add annotations with window-relative coords (`window_ref`) |
+| `screen_recorder_annotate_activate` | Enter annotation mode |
+| `screen_recorder_annotate_deactivate` | Exit annotation mode |
+| `screen_recorder_annotate_list` | List strokes with geometry (bounds, length, angle, area) |
+| `screen_recorder_annotate_undo` | Undo last annotation |
+| `screen_recorder_annotate_redo` | Redo last undone annotation |
 | `screen_recorder_annotate_clear` | Clear all annotations |
+
+#### Drawing Tool Settings
+
+| Tool | Description |
+|------|-------------|
 | `screen_recorder_tool` | Select drawing tool (pen, arrow, rectangle, etc.) |
+| `screen_recorder_tool_color` | Set drawing color (name or hex) |
+| `screen_recorder_tool_width` | Set line width (1-20) |
+
+#### Sessions
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_session_new` | Create named session (optionally from current strokes) |
+| `screen_recorder_session_list` | List saved sessions |
+| `screen_recorder_session_switch` | Switch to a session (auto-saves current) |
+| `screen_recorder_session_delete` | Delete a session |
+| `screen_recorder_session_save` | Save current annotations to active session |
+| `screen_recorder_session_export` | Export session as JSON |
+
+#### License
+
+| Tool | Description |
+|------|-------------|
 | `screen_recorder_usage` | Check license plan and daily usage |
+
+### AI Agent Workflow Example
+
+An AI agent can use these tools together for precise UI documentation:
+
+```
+1. screen_recorder_list_windows       → Find target window (e.g. iOS Simulator)
+2. screen_recorder_detect_elements    → OCR text elements with bounding boxes
+3. screen_recorder_annotate           → Draw arrows/labels using window-relative coords
+4. screen_recorder_screenshot         → Capture annotated result
+5. screen_recorder_session_save       → Persist for later reference
+```
 
 ## Architecture
 
