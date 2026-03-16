@@ -121,10 +121,22 @@ jobs:
           fi
           echo "Signing with identity: $IDENTITY_HASH"
 
+          # Sign nested CLI binaries first (no app-specific entitlements)
+          MACOS_DIR=".build/release/${APP_NAME}.app/Contents/MacOS"
+          for cli_bin in "$MACOS_DIR/sr" "$MACOS_DIR/sr-mcp"; do
+            if [ -f "$cli_bin" ]; then
+              codesign --force --sign "$IDENTITY_HASH" \
+                --options runtime --timestamp \
+                "$cli_bin"
+              echo "   ✅ Signed $(basename "$cli_bin")"
+            fi
+          done
+
+          # Sign the main .app bundle (NO --deep)
           codesign --force --sign "$IDENTITY_HASH" \
             --options runtime \
             --entitlements Resources/ScreenRecorder.entitlements \
-            --deep --timestamp --generate-entitlement-der \
+            --timestamp --generate-entitlement-der \
             ".build/release/${APP_NAME}.app"
 
           codesign --verify --verbose=2 ".build/release/${APP_NAME}.app"

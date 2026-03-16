@@ -65,12 +65,21 @@ for bundle in "$BUNDLES_DIR"/*.bundle; do
     fi
 done
 
-# Sign the .app bundle with hardened runtime + entitlements
+# Sign nested CLI binaries first (no app-specific entitlements)
 echo "🔏 Signing with developer certificate (hardened runtime)..."
+for cli_bin in "$MACOS_DIR/sr" "$MACOS_DIR/sr-mcp"; do
+    if [ -f "$cli_bin" ]; then
+        codesign --force --sign "$SIGNING_IDENTITY" \
+          --options runtime \
+          "$cli_bin" 2>&1
+        echo "   ✅ Signed $(basename "$cli_bin")"
+    fi
+done
+
+# Sign the main .app bundle (with app-specific entitlements, NO --deep)
 codesign --force --sign "$SIGNING_IDENTITY" \
   --options runtime \
   --entitlements Resources/ScreenRecorder.entitlements \
-  --deep \
   --generate-entitlement-der \
   "$APP_DIR" 2>&1
 

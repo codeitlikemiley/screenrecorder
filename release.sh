@@ -93,10 +93,25 @@ fi
 
 # ─── Step 3: Code Sign ─────────────────────────────────────
 echo "🔏 Step 3/7: Signing with Developer ID (hardened runtime)..."
+
+# Sign nested CLI binaries first (no app-specific entitlements)
+# Using --deep would apply screen-capture/camera/mic entitlements to CLI
+# binaries, which confuses macOS TCC and prevents the app from
+# auto-registering in System Settings permission panes.
+for cli_bin in "${MACOS_DIR}/sr" "${MACOS_DIR}/sr-mcp"; do
+    if [ -f "$cli_bin" ]; then
+        codesign --force --sign "${SIGNING_IDENTITY}" \
+          --options runtime \
+          --timestamp \
+          "$cli_bin" 2>&1
+        echo "   ✅ Signed $(basename "$cli_bin")"
+    fi
+done
+
+# Sign the main .app bundle (with app-specific entitlements, NO --deep)
 codesign --force --sign "${SIGNING_IDENTITY}" \
   --options runtime \
   --entitlements Resources/ScreenRecorder.entitlements \
-  --deep \
   --timestamp \
   --generate-entitlement-der \
   "${APP_DIR}" 2>&1
