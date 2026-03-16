@@ -22,44 +22,98 @@ A native macOS screen recorder designed for developers. Record your screen, came
 - **HEVC (H.265)** — ~50% smaller files than H.264
 - **AI Step Generation** — Analyze recordings with OpenAI, Anthropic, Gemini, or any compatible API
 - **Recording Library** — Browse, re-process, and manage all past recordings
+- **CLI + MCP Server** — Bundled inside the app, installable from Settings
+- **License Gating** — Activate via CLI or in-app Settings; features lock until activated
 - **Menu Bar App** — Lives in the menu bar, no dock icon
 
 ## Install
 
-### Download (Recommended)
+### Homebrew (Recommended)
+
+One command installs the app, CLI (`sr`), and MCP server (`sr-mcp`):
+
+```bash
+brew install --cask codeitlikemiley/tap/screenrecorder
+```
+
+This automatically:
+- Installs `ScreenRecorder.app` to `/Applications`
+- Creates `/usr/local/bin/sr` and `/usr/local/bin/sr-mcp` symlinks
+- Removes Gatekeeper quarantine
+
+### Download DMG
 
 1. Download the latest DMG from [**Releases**](https://github.com/codeitlikemiley/screenrecorder/releases/latest):
 
    ```bash
-   # Or grab it directly via curl
    curl -LO https://github.com/codeitlikemiley/screenrecorder/releases/download/v1.0.0/ScreenRecorder-1.0.0.dmg
    ```
 
-2. Open the `.dmg` and drag **Screen Recorder** to your **Applications** folder.
+2. Open the `.dmg` and drag **Screen Recorder** to **Applications**.
 
-3. Launch from Applications. On first launch, macOS may show a Gatekeeper warning since the app is signed but not distributed via the App Store:
+3. On first launch, macOS may show a Gatekeeper warning:
 
    ```bash
-   # Remove the quarantine flag to allow the app to open
    xattr -d com.apple.quarantine /Applications/Screen\ Recorder.app
    ```
 
-4. Grant **Screen Recording**, **Accessibility**, and **Microphone** permissions when prompted.
+4. **Install CLI tools**: Open **Settings → CLI Tools → Install CLI Tools** to create terminal commands.
 
 ### Build from Source
 
 ```bash
 git clone https://github.com/codeitlikemiley/screenrecorder.git
 cd screenrecorder
+
+# Create .env with your signing identity
+cat > .env << 'EOF'
+SIGNING_IDENTITY="Developer ID Application: Your Name (XXXXXXXXXX)"
+APPLE_TEAM_ID="XXXXXXXXXX"
+SR_LICENSE_SERVER=http://localhost:3000   # optional, for local dev
+EOF
+
 ./build.sh
 open .build/ScreenRecorder.app
 ```
 
 > Requires macOS 14+ and Xcode Command Line Tools. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
 
+## License Activation
+
+A license key is required to use recording features. Without one, the menu bar shows **🔑 Activate License** and recording/annotation features are disabled.
+
+### Get a License Key
+
+Sign up at [screenrecorder.dev](https://screenrecorder.dev) to get your license key.
+
+| Plan | MCP Tool Calls | Price |
+|------|---------------|-------|
+| Free | 100 / day | $0 |
+| Pro | Unlimited | $9/mo |
+
+### Activate
+
+**In the app**: Settings → License → paste key → Activate
+
+**Via CLI**:
+
+```bash
+sr activate SR-XXXX-XXXX-XXXX-XXXX
+```
+
+License data is stored in a shared `UserDefaults` suite — activating in one place works everywhere (app, CLI, MCP server).
+
+```bash
+# Check status
+sr status
+
+# Deactivate
+sr deactivate
+```
+
 ## Global Hotkeys
 
-All hotkeys are customizable in **Settings → Shortcuts**.
+All hotkeys are customizable in **Settings → Shortcuts**. Hotkeys only work when a license is activated.
 
 ### Recording & Capture
 
@@ -103,8 +157,6 @@ All hotkeys are customizable in **Settings → Shortcuts**.
 > `⌘⇧3` and `⌘⇧4` conflict with macOS default screenshot shortcuts. Each has an alt fallback (`⌘⇧S` and `⌘⇧⌥3`) that works without changes. For the best experience, disable the macOS defaults:
 >
 > **System Settings → Keyboard → Keyboard Shortcuts → Screenshots** → uncheck `⌘⇧3`, `⌘⇧4`, and `⌘⇧5`.
->
-> All shortcuts are customizable in the app's **Settings → Shortcuts**.
 
 ## AI Step Generation
 
@@ -174,8 +226,6 @@ Click **Export** in the title bar to copy or save the workflow:
 | **GitHub Issue** | Issue body with task checklist and context |
 | **JSON Workflow** | Machine-readable workflow for automation |
 
-Export to clipboard or save to file — all formats are supported.
-
 <p align="center">
   <img src="docs/images/export-options.png" width="600" alt="Export Options">
 </p>
@@ -194,90 +244,14 @@ Access all past recordings from the menu bar via **📚 Recording Library**.
   <img src="docs/images/recording-library.png" width="600" alt="Recording Library">
 </p>
 
-## MCP Server (AI Tool Integration)
-
-Screen Recorder includes an **MCP server** (`sr-mcp`) that lets AI assistants (Claude Code, Cursor, Windsurf, etc.) control the app programmatically — start/stop recording, take screenshots, draw annotations, and more.
-
-### Setup
-
-1. **Build the MCP binary:**
-
-   ```bash
-   swift build
-   # Binary is at .build/debug/sr-mcp
-   ```
-
-2. **Activate your license:**
-
-   ```bash
-   sr-mcp activate SR-XXXX-XXXX-XXXX-XXXX
-   ```
-
-   Get a license key at [screenrecorder.dev](https://screenrecorder.dev). Free tier includes 100 MCP tool calls/day.
-
-3. **Add to your MCP client config:**
-
-   **Claude Code** (`~/.claude/claude_desktop_config.json`):
-
-   ```json
-   {
-     "mcpServers": {
-       "screen-recorder": {
-         "command": "/path/to/sr-mcp",
-         "args": ["serve"]
-       }
-     }
-   }
-   ```
-
-   **Cursor** (`.cursor/mcp.json`):
-
-   ```json
-   {
-     "mcpServers": {
-       "screen-recorder": {
-         "command": "/path/to/sr-mcp",
-         "args": ["serve"]
-       }
-     }
-   }
-   ```
-
-4. **Make sure Screen Recorder is running** — the MCP server proxies tool calls to the app via its local JSON-RPC server.
-
-### Available Tools
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_status` | Get current recording state |
-| `screen_recorder_start` | Start recording |
-| `screen_recorder_stop` | Stop recording |
-| `screen_recorder_screenshot` | Capture a screenshot |
-| `screen_recorder_annotate` | Add, undo, or redo annotations |
-| `screen_recorder_annotate_clear` | Clear all annotations |
-| `screen_recorder_tool` | Select drawing tool (pen, arrow, rectangle, etc.) |
-| `screen_recorder_usage` | Check license plan and daily usage |
-
-### License & Rate Limits
-
-| Plan | Daily Limit | Price |
-|------|------------|-------|
-| Free | 100 tool calls | $0 |
-| Pro | Unlimited | $9/mo |
-
-```bash
-# Check your usage anytime
-sr-mcp usage
-
-# Deactivate license
-sr-mcp deactivate
-```
-
 ## CLI
 
-The `sr` binary provides command-line control over Screen Recorder:
+The `sr` binary is bundled inside `ScreenRecorder.app` and installed to `/usr/local/bin/sr` via Homebrew or in-app Settings.
 
 ```bash
+# Activate your license
+sr activate SR-XXXX-XXXX-XXXX-XXXX
+
 # Check app status
 sr status
 
@@ -297,7 +271,69 @@ sr annotate clear
 sr tool select pen
 ```
 
-> The `sr` CLI and MCP server both require the Screen Recorder app to be running.
+> The `sr` CLI requires the Screen Recorder app to be running.
+
+## MCP Server (AI Tool Integration)
+
+The MCP server (`sr-mcp`) is also bundled inside the app. It lets AI assistants (Claude Code, Cursor, Windsurf, etc.) control the app programmatically.
+
+### Setup
+
+1. **Install** via Homebrew or Settings → CLI Tools → Install CLI Tools
+
+2. **Add to your MCP client config:**
+
+   **Claude Code** (`~/.claude.json`):
+
+   ```json
+   {
+     "mcpServers": {
+       "screen-recorder": {
+         "command": "/usr/local/bin/sr-mcp",
+         "args": ["serve"]
+       }
+     }
+   }
+   ```
+
+   **Cursor** (`.cursor/mcp.json`):
+
+   ```json
+   {
+     "mcpServers": {
+       "screen-recorder": {
+         "command": "/usr/local/bin/sr-mcp",
+         "args": ["serve"]
+       }
+     }
+   }
+   ```
+
+3. **Make sure Screen Recorder is running** — the MCP server proxies tool calls to the app via its local JSON-RPC server.
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_status` | Get current recording state |
+| `screen_recorder_start` | Start recording |
+| `screen_recorder_stop` | Stop recording |
+| `screen_recorder_screenshot` | Capture a screenshot |
+| `screen_recorder_annotate` | Add, undo, or redo annotations |
+| `screen_recorder_annotate_clear` | Clear all annotations |
+| `screen_recorder_tool` | Select drawing tool (pen, arrow, rectangle, etc.) |
+| `screen_recorder_usage` | Check license plan and daily usage |
+
+## Architecture
+
+```
+ScreenRecorder.app/Contents/MacOS/
+├── ScreenRecorder    # Main GUI app (menu bar)
+├── sr                # CLI binary
+└── sr-mcp            # MCP server binary
+```
+
+All three binaries share license data via a `UserDefaults` suite (`com.codeitlikemiley.screenrecorder.shared`). Activating a license in any one of them makes it available to the others instantly.
 
 ## Documentation
 
