@@ -6,12 +6,18 @@ import Foundation
 final class LicenseManager {
     static let shared = LicenseManager()
 
+    /// Revalidation interval: 24 hours
+    private let revalidationInterval: TimeInterval = 24 * 60 * 60
+    /// Grace period when server is unreachable: 7 days
+    private let gracePeriod: TimeInterval = 7 * 24 * 60 * 60
+
     private let baseDir: URL
     private let licensePath: URL
     private let usagePath: URL
 
     private var cachedLicense: LicenseCache?
     private var cachedUsage: UsageTracker?
+    private var isRevalidating = false
 
     /// Default license server URL — override via SR_LICENSE_SERVER env var
     var licenseServerURL: String {
@@ -74,10 +80,76 @@ final class LicenseManager {
         try? FileManager.default.removeItem(at: licensePath)
     }
 
+    // MARK: - Revalidation
+
+    /// Re-validate the cached license with the server if stale (>24h old).
+    /// On success, updates the local cache. On network failure, allows a
+    /// grace period of 7 days before forcing a downgrade.
+    func revalidateIfNeeded() async {
+        guard let license = cachedLicense, !isRevalidating else { return }
+
+        let age = Date().timeIntervalSince(license.validatedAt)
+        guard age > revalidationInterval else { return }
+
+        isRevalidating = true
+        defer { isRevalidating = false }
+
+        fputs("License cache is \(Int(age/3600))h old — revalidating...\n", stderr)
+
+        do {
+            let url = URL(string: "\(licenseServerURL)/api/license/validate")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(["key": license.key])
+            request.timeoutInterval = 10
+
+            let (data, _) = try await URLSession.shared.data(for: request)
+            let response = try JSONDecoder().decode(LicenseValidationResponse.self, from: data)
+
+            if response.valid {
+                let updated = LicenseCache(
+                    key: license.key,
+                    plan: response.plan,
+                    email: response.email,
+                    validatedAt: Date()
+                )
+                cachedLicense = updated
+                saveJSON(updated, to: licensePath)
+                if response.plan != license.plan {
+                    fputs("License plan changed: \(license.plan) → \(response.plan)\n", stderr)
+                } else {
+                    fputs("License revalidated — plan: \(response.plan)\n", stderr)
+                }
+            } else {
+                // License is no longer valid — deactivate
+                fputs("License no longer valid: \(response.reason ?? "unknown"). Deactivating.\n", stderr)
+                deactivate()
+            }
+        } catch {
+            // Network error — check grace period
+            fputs("Revalidation failed (\(error.localizedDescription)) — using cached plan\n", stderr)
+            if age > gracePeriod {
+                fputs("Grace period (7d) exceeded — downgrading to free\n", stderr)
+                let downgraded = LicenseCache(
+                    key: license.key,
+                    plan: "free",
+                    email: license.email,
+                    validatedAt: license.validatedAt
+                )
+                cachedLicense = downgraded
+                saveJSON(downgraded, to: licensePath)
+            }
+        }
+    }
+
     // MARK: - Rate Limiting
 
-    /// Check if a tool call is allowed. Returns true if allowed.
-    func checkRateLimit() -> Bool {
+    /// Check if a tool call is allowed. Revalidates first if needed.
+    func checkRateLimit() async -> Bool {
+        // Revalidate license if cache is stale
+        await revalidateIfNeeded()
+
         guard let license = cachedLicense else {
             return false // No license activated
         }

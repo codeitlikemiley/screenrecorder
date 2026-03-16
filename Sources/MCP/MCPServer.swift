@@ -71,8 +71,8 @@ final class MCPServer {
             return
         }
 
-        // Rate limit check
-        guard licenseManager.checkRateLimit() else {
+        // Rate limit check (also revalidates license if stale)
+        guard await licenseManager.checkRateLimit() else {
             let usage = licenseManager.currentUsage
             writeToolError(
                 id: id,
