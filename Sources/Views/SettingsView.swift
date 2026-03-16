@@ -5,6 +5,8 @@ import KeyboardShortcuts
 struct SettingsView: View {
     @ObservedObject var appState: AppState
     @StateObject private var aiManager = AIProviderManager.shared
+    @StateObject private var licenseActivator = LicenseActivator.shared
+    @State private var licenseKeyInput: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -24,6 +26,92 @@ struct SettingsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    // License
+                    settingsSection(title: "License", icon: "key") {
+                        if licenseActivator.isActivated {
+                            // Active license display
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    Text(licenseActivator.plan.uppercased())
+                                        .font(.system(size: 11, weight: .bold))
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 3)
+                                        .background(licenseActivator.plan == "pro"
+                                            ? Color.blue.opacity(0.2)
+                                            : Color.gray.opacity(0.2))
+                                        .foregroundStyle(licenseActivator.plan == "pro"
+                                            ? .blue
+                                            : .secondary)
+                                        .clipShape(Capsule())
+
+                                    Text(licenseActivator.email)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                if licenseActivator.plan == "pro" {
+                                    Text("Unlimited MCP tool calls")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.green)
+                                } else {
+                                    Text("100 MCP tool calls / day")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Button("Deactivate License") {
+                                    licenseActivator.deactivate()
+                                }
+                                .controlSize(.small)
+                                .foregroundStyle(.red)
+                            }
+                        } else {
+                            // License key input
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Paste your license key to activate")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+
+                                HStack(spacing: 8) {
+                                    TextField("SR-XXXX-XXXX-XXXX-XXXX", text: $licenseKeyInput)
+                                        .textFieldStyle(.roundedBorder)
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .frame(maxWidth: 260)
+
+                                    Button(action: {
+                                        Task {
+                                            await licenseActivator.activate(key: licenseKeyInput)
+                                            if licenseActivator.isActivated {
+                                                licenseKeyInput = ""
+                                            }
+                                        }
+                                    }) {
+                                        if licenseActivator.isLoading {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                        } else {
+                                            Text("Activate")
+                                        }
+                                    }
+                                    .disabled(licenseKeyInput.isEmpty || licenseActivator.isLoading)
+                                    .controlSize(.small)
+                                }
+                            }
+                        }
+
+                        // Status messages
+                        if let error = licenseActivator.errorMessage {
+                            Text(error)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.red)
+                        }
+                        if let success = licenseActivator.successMessage {
+                            Text(success)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.green)
+                        }
+                    }
+
                     // Output Format
                     settingsSection(title: "Output Format", icon: "film") {
                         Picker("Format", selection: $appState.outputFormat) {
