@@ -18,6 +18,8 @@ struct SR: ParsableCommand {
             Annotate.self,
             Screenshot.self,
             Tool.self,
+            Screen.self,
+            Windows.self,
         ],
         defaultSubcommand: Status.self
     )

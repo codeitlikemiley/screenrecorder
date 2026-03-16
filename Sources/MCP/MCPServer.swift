@@ -91,6 +91,21 @@ final class MCPServer {
             case "screen_recorder_status":
                 result = try await callRPC(method: "status")
 
+            case "screen_recorder_screen_info":
+                let showAll = arguments["all_displays"] as? Bool ?? false
+                var rpcParams: [String: Any] = [:]
+                if showAll { rpcParams["all"] = true }
+                result = try await callRPC(method: "screen.info", params: rpcParams.isEmpty ? nil : rpcParams)
+
+            case "screen_recorder_list_windows":
+                let appFilter = arguments["app"] as? String
+                var rpcParams: [String: Any] = [:]
+                if let app = appFilter { rpcParams["app"] = app }
+                result = try await callRPC(method: "windows.list", params: rpcParams.isEmpty ? nil : rpcParams)
+
+            case "screen_recorder_focused_window":
+                result = try await callRPC(method: "windows.focused")
+
             case "screen_recorder_start":
                 result = try await callRPC(method: "record.start")
 
@@ -187,6 +202,31 @@ final class MCPServer {
             toolDef(
                 name: "screen_recorder_status",
                 description: "Get the current status of Screen Recorder (recording state, camera, mic, annotation mode)",
+                properties: [:]
+            ),
+            toolDef(
+                name: "screen_recorder_screen_info",
+                description: "Get display information (resolution, scale factor, visible frame). Essential for calculating annotation coordinates.",
+                properties: [
+                    "all_displays": [
+                        "type": "boolean",
+                        "description": "If true, return all connected displays. Default: main display only.",
+                    ]
+                ]
+            ),
+            toolDef(
+                name: "screen_recorder_list_windows",
+                description: "List all visible on-screen windows with their app name, title, bounds (x, y, width, height), and window ID. Use to find window positions for targeted screenshots or placing annotations.",
+                properties: [
+                    "app": [
+                        "type": "string",
+                        "description": "Filter windows by app name (case-insensitive substring match)",
+                    ]
+                ]
+            ),
+            toolDef(
+                name: "screen_recorder_focused_window",
+                description: "Get the currently focused/frontmost window with its app name, title, and bounds.",
                 properties: [:]
             ),
             toolDef(

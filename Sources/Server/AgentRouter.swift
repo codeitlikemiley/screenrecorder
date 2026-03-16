@@ -22,6 +22,14 @@ class AgentRouter {
         case "status":
             return getStatus()
 
+        // Screen & Windows
+        case "screen.info":
+            return getScreenInfo(params: params)
+        case "windows.list":
+            return getWindowsList(params: params)
+        case "windows.focused":
+            return getFocusedWindow()
+
         // Recording
         case "record.start":
             return try await startRecording()
@@ -82,7 +90,117 @@ class AgentRouter {
         ]
     }
 
-    // MARK: - Recording
+    // MARK: - Screen & Window Info
+
+    private func getScreenInfo(params: [String: Any]?) -> [String: Any] {
+        let showAll = params?["all"] as? Bool ?? false
+        let screens = showAll ? NSScreen.screens : [NSScreen.main].compactMap { $0 }
+
+        let displays: [[String: Any]] = screens.enumerated().map { (i, screen) in
+            let frame = screen.frame
+            let visible = screen.visibleFrame
+            return [
+                "index": i,
+                "is_main": screen == NSScreen.main,
+                "width": Int(frame.width),
+                "height": Int(frame.height),
+                "scale_factor": Double(screen.backingScaleFactor),
+                "frame": [
+                    "x": Double(frame.origin.x),
+                    "y": Double(frame.origin.y),
+                    "width": Double(frame.width),
+                    "height": Double(frame.height),
+                ],
+                "visible_frame": [
+                    "x": Double(visible.origin.x),
+                    "y": Double(visible.origin.y),
+                    "width": Double(visible.width),
+                    "height": Double(visible.height),
+                ],
+            ] as [String: Any]
+        }
+
+        if displays.count == 1, let d = displays.first {
+            return d
+        }
+        return ["displays": displays, "count": displays.count]
+    }
+
+    private func getWindowsList(params: [String: Any]?) -> [String: Any] {
+        let appFilter = params?["app"] as? String
+        let windows = queryWindows(appFilter: appFilter)
+        return ["windows": windows, "count": windows.count]
+    }
+
+    private func getFocusedWindow() -> [String: Any] {
+        let frontApp = NSWorkspace.shared.frontmostApplication
+        guard let bundleId = frontApp?.bundleIdentifier else {
+            return ["error": "No focused application"]
+        }
+
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return ["error": "Cannot query windows"]
+        }
+
+        for info in windowList {
+            let ownerPID = info[kCGWindowOwnerPID as String] as? Int32 ?? 0
+            if ownerPID == frontApp?.processIdentifier {
+                return windowInfoDict(info)
+            }
+        }
+        return ["error": "No focused window found", "app": frontApp?.localizedName ?? bundleId]
+    }
+
+    /// Query visible windows, optionally filtering by app name.
+    private func queryWindows(appFilter: String? = nil) -> [[String: Any]] {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+
+        var results: [[String: Any]] = []
+        for info in windowList {
+            let layer = info[kCGWindowLayer as String] as? Int ?? 0
+            // Skip menu bar, dock, and other system UI (layer > 0)
+            guard layer == 0 else { continue }
+
+            let ownerName = info[kCGWindowOwnerName as String] as? String ?? ""
+            if let filter = appFilter, !ownerName.localizedCaseInsensitiveContains(filter) {
+                continue
+            }
+
+            results.append(windowInfoDict(info))
+        }
+        return results
+    }
+
+    private func windowInfoDict(_ info: [String: Any]) -> [String: Any] {
+        let windowId = info[kCGWindowNumber as String] as? Int ?? 0
+        let ownerName = info[kCGWindowOwnerName as String] as? String ?? ""
+        let title = info[kCGWindowName as String] as? String ?? ""
+        let layer = info[kCGWindowLayer as String] as? Int ?? 0
+        let isOnScreen = info[kCGWindowIsOnscreen as String] as? Bool ?? true
+
+        var bounds: [String: Any] = [:]
+        if let boundsDict = info[kCGWindowBounds as String] as? [String: Any] {
+            bounds = [
+                "x": boundsDict["X"] as? Double ?? 0,
+                "y": boundsDict["Y"] as? Double ?? 0,
+                "width": boundsDict["Width"] as? Double ?? 0,
+                "height": boundsDict["Height"] as? Double ?? 0,
+            ]
+        }
+
+        return [
+            "id": windowId,
+            "app": ownerName,
+            "title": title,
+            "bounds": bounds,
+            "is_on_screen": isOnScreen,
+            "layer": layer,
+        ] as [String: Any]
+    }
 
     private func startRecording() async throws -> [String: Any] {
         guard let coordinator = coordinator else { throw AgentError.appNotReady }
