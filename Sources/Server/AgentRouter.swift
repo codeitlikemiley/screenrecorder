@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Vision
 
 /// Routes JSON-RPC method calls to app actions.
 /// Acts as the bridge between the network layer and the running app.
@@ -29,6 +30,8 @@ class AgentRouter {
             return getWindowsList(params: params)
         case "windows.focused":
             return getFocusedWindow()
+        case "elements.detect":
+            return try await detectElements(params: params)
 
         // Recording
         case "record.start":
@@ -202,6 +205,176 @@ class AgentRouter {
         ] as [String: Any]
     }
 
+    // MARK: - Element Detection (Vision OCR)
+
+    private func detectElements(params: [String: Any]?) async throws -> [String: Any] {
+        let minConfidence = params?["min_confidence"] as? Double ?? 0.5
+        let windowName = params?["window"] as? String
+        let windowId = params?["window_id"] as? Int
+
+        // Capture image (same targeting logic as screenshot)
+        let captureRect: CGRect
+        var captureWindowId: CGWindowID = kCGNullWindowID
+        var listOption: CGWindowListOption = .optionOnScreenOnly
+        var windowBounds: CGRect? = nil
+
+        if let regionDict = params?["region"] as? [String: Any] {
+            let x = regionDict["x"] as? Double ?? 0
+            let y = regionDict["y"] as? Double ?? 0
+            let w = regionDict["width"] as? Double ?? 0
+            let h = regionDict["height"] as? Double ?? 0
+            captureRect = CGRect(x: x, y: y, width: w, height: h)
+            windowBounds = captureRect
+        } else if let windowId = windowId {
+            captureWindowId = CGWindowID(windowId)
+            listOption = .optionIncludingWindow
+            captureRect = CGRect.null
+            windowBounds = findWindowBounds(windowId: windowId)
+        } else if let windowName = windowName {
+            if let wid = findWindowId(appName: windowName) {
+                captureWindowId = CGWindowID(wid)
+                listOption = .optionIncludingWindow
+                captureRect = CGRect.null
+                windowBounds = findWindowBounds(windowId: wid)
+            } else {
+                throw AgentError.captureError("No window found for app: \(windowName)")
+            }
+        } else {
+            guard let screen = NSScreen.main else {
+                throw AgentError.captureError("No main screen")
+            }
+            captureRect = screen.frame
+            windowBounds = captureRect
+        }
+
+        guard let cgImage = CGWindowListCreateImage(
+            captureRect,
+            listOption,
+            captureWindowId,
+            [.bestResolution]
+        ) else {
+            throw AgentError.captureError("Screenshot failed for element detection")
+        }
+
+        let elements = try await runTextRecognition(
+            on: cgImage,
+            minConfidence: Float(minConfidence),
+            imageOrigin: windowBounds ?? CGRect(x: 0, y: 0, width: CGFloat(cgImage.width), height: CGFloat(cgImage.height))
+        )
+
+        return [
+            "ok": true,
+            "elements": elements,
+            "count": elements.count,
+            "image_width": cgImage.width,
+            "image_height": cgImage.height,
+        ]
+    }
+
+    private func runTextRecognition(
+        on cgImage: CGImage,
+        minConfidence: Float,
+        imageOrigin: CGRect
+    ) async throws -> [[String: Any]] {
+        return try await withCheckedThrowingContinuation { continuation in
+            let request = VNRecognizeTextRequest { request, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                guard let observations = request.results as? [VNRecognizedTextObservation] else {
+                    continuation.resume(returning: [])
+                    return
+                }
+
+                let imgW = CGFloat(cgImage.width)
+                let imgH = CGFloat(cgImage.height)
+
+                var elements: [[String: Any]] = []
+                for obs in observations {
+                    guard let candidate = obs.topCandidates(1).first,
+                          candidate.confidence >= minConfidence else { continue }
+
+                    // Vision normalized coords (0-1, bottom-left origin) → pixel coords (top-left origin)
+                    let box = obs.boundingBox
+                    let x = box.origin.x * imgW
+                    let y = (1 - box.origin.y - box.height) * imgH
+                    let w = box.width * imgW
+                    let h = box.height * imgH
+
+                    // Map pixel coords to screen coords
+                    let scaleX = imageOrigin.width / imgW
+                    let scaleY = imageOrigin.height / imgH
+                    let screenX = imageOrigin.origin.x + x * scaleX
+                    let screenY = imageOrigin.origin.y + y * scaleY
+                    let screenW = w * scaleX
+                    let screenH = h * scaleY
+
+                    elements.append([
+                        "text": candidate.string,
+                        "confidence": round(Double(candidate.confidence) * 1000) / 1000,
+                        "bounds": [
+                            "x": round(screenX * 100) / 100,
+                            "y": round(screenY * 100) / 100,
+                            "width": round(screenW * 100) / 100,
+                            "height": round(screenH * 100) / 100,
+                        ],
+                        "center": [
+                            "x": round((screenX + screenW / 2) * 100) / 100,
+                            "y": round((screenY + screenH / 2) * 100) / 100,
+                        ],
+                    ] as [String: Any])
+                }
+
+                // Sort top-to-bottom, left-to-right
+                elements.sort { a, b in
+                    let aB = a["bounds"] as? [String: Any] ?? [:]
+                    let bB = b["bounds"] as? [String: Any] ?? [:]
+                    let ay = aB["y"] as? Double ?? 0
+                    let by = bB["y"] as? Double ?? 0
+                    if abs(ay - by) > 10 { return ay < by }
+                    let ax = aB["x"] as? Double ?? 0
+                    let bx = bB["x"] as? Double ?? 0
+                    return ax < bx
+                }
+
+                continuation.resume(returning: elements)
+            }
+
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+
+            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            do {
+                try handler.perform([request])
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+
+    /// Find window bounds from CGWindowList by window ID
+    private func findWindowBounds(windowId: Int) -> CGRect? {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+        for info in windowList {
+            let wid = info[kCGWindowNumber as String] as? Int ?? 0
+            if wid == windowId, let boundsDict = info[kCGWindowBounds as String] as? [String: Any] {
+                let x = boundsDict["X"] as? Double ?? 0
+                let y = boundsDict["Y"] as? Double ?? 0
+                let w = boundsDict["Width"] as? Double ?? 0
+                let h = boundsDict["Height"] as? Double ?? 0
+                return CGRect(x: x, y: y, width: w, height: h)
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Recording
+
     private func startRecording() async throws -> [String: Any] {
         guard let coordinator = coordinator else { throw AgentError.appNotReady }
         guard let state = appState, !state.isRecording else {
@@ -285,15 +458,83 @@ class AgentRouter {
 
     private func listAnnotations() -> [String: Any] {
         guard let state = appState else { return ["ok": false] }
-        let strokes = state.annotationState.strokes.map { stroke -> [String: Any] in
+        let strokes = state.annotationState.strokes.enumerated().map { (index, stroke) -> [String: Any] in
             var dict: [String: Any] = [
+                "index": index,
                 "tool": stroke.tool.rawValue,
                 "point_count": stroke.points.count,
                 "line_width": stroke.lineWidth,
             ]
+
+            // Color (extract RGB components)
+            if let cgColor = NSColor(stroke.color).usingColorSpace(.sRGB) {
+                dict["color"] = [
+                    "r": Double(cgColor.redComponent),
+                    "g": Double(cgColor.greenComponent),
+                    "b": Double(cgColor.blueComponent),
+                ]
+            }
+
+            // Coordinates
+            if let first = stroke.points.first {
+                dict["start"] = ["x": Double(first.x), "y": Double(first.y)]
+            }
+            if stroke.points.count >= 2, let last = stroke.points.last {
+                dict["end"] = ["x": Double(last.x), "y": Double(last.y)]
+            }
+
+            // Bounding box
+            if let rect = stroke.boundingRect {
+                dict["bounds"] = [
+                    "x": Double(rect.origin.x),
+                    "y": Double(rect.origin.y),
+                    "width": Double(rect.width),
+                    "height": Double(rect.height),
+                ]
+            } else if stroke.points.count >= 1 {
+                // Compute bounding box from all points
+                let xs = stroke.points.map(\.x)
+                let ys = stroke.points.map(\.y)
+                let minX = xs.min()!, maxX = xs.max()!
+                let minY = ys.min()!, maxY = ys.max()!
+                dict["bounds"] = [
+                    "x": Double(minX), "y": Double(minY),
+                    "width": Double(maxX - minX),
+                    "height": Double(maxY - minY),
+                ]
+            }
+
+            // Geometry for lines/arrows: length and angle
+            if (stroke.tool == .arrow || stroke.tool == .line), stroke.points.count >= 2 {
+                let from = stroke.points.first!
+                let to = stroke.points.last!
+                let dx = to.x - from.x
+                let dy = to.y - from.y
+                let length = hypot(dx, dy)
+                let angle = atan2(dy, dx) * 180.0 / .pi  // degrees from horizontal
+                dict["length"] = round(length * 100) / 100
+                dict["angle"] = round(angle * 100) / 100
+            }
+
+            // Area for shapes
+            if (stroke.tool == .rectangle || stroke.tool == .ellipse), let rect = stroke.boundingRect {
+                if stroke.tool == .rectangle {
+                    dict["area"] = round(Double(rect.width * rect.height) * 100) / 100
+                } else {
+                    dict["area"] = round(Double.pi * Double(rect.width / 2) * Double(rect.height / 2) * 100) / 100
+                }
+                dict["center"] = [
+                    "x": Double(rect.midX),
+                    "y": Double(rect.midY),
+                ]
+            }
+
+            // Text content
             if let text = stroke.textContent {
                 dict["text"] = text
+                dict["font_size"] = stroke.lineWidth  // lineWidth stores fontSize for text
             }
+
             return dict
         }
         return ["strokes": strokes, "count": strokes.count]

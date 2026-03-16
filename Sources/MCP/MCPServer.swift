@@ -106,6 +106,14 @@ final class MCPServer {
             case "screen_recorder_focused_window":
                 result = try await callRPC(method: "windows.focused")
 
+            case "screen_recorder_detect_elements":
+                var rpcParams: [String: Any] = [:]
+                if let window = arguments["window"] as? String { rpcParams["window"] = window }
+                if let windowId = arguments["window_id"] as? Int { rpcParams["window_id"] = windowId }
+                if let region = arguments["region"] { rpcParams["region"] = region }
+                if let minConf = arguments["min_confidence"] as? Double { rpcParams["min_confidence"] = minConf }
+                result = try await callRPC(method: "elements.detect", params: rpcParams.isEmpty ? nil : rpcParams)
+
             case "screen_recorder_start":
                 result = try await callRPC(method: "record.start")
 
@@ -231,6 +239,28 @@ final class MCPServer {
                 name: "screen_recorder_focused_window",
                 description: "Get the currently focused/frontmost window with its app name, title, and bounds.",
                 properties: [:]
+            ),
+            toolDef(
+                name: "screen_recorder_detect_elements",
+                description: "Detect text/UI elements via Vision OCR. Screenshots a window or region and returns each detected element's text, bounding box (x, y, width, height in screen points), center point, and confidence score. Use returned coordinates to precisely place annotations. Ideal for iOS Simulator, desktop apps, or any non-browser UI.",
+                properties: [
+                    "window": [
+                        "type": "string",
+                        "description": "Target window by app name (case-insensitive substring match)",
+                    ],
+                    "window_id": [
+                        "type": "integer",
+                        "description": "Target window by CGWindowID (from list_windows)",
+                    ],
+                    "region": [
+                        "type": "object",
+                        "description": "Target a specific screen region. Properties: x, y, width, height",
+                    ],
+                    "min_confidence": [
+                        "type": "number",
+                        "description": "Minimum OCR confidence 0.0-1.0 (default: 0.5). Higher = fewer but more accurate results.",
+                    ],
+                ]
             ),
             toolDef(
                 name: "screen_recorder_start",

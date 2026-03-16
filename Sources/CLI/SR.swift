@@ -20,6 +20,7 @@ struct SR: ParsableCommand {
             Tool.self,
             Screen.self,
             Windows.self,
+            Detect.self,
         ],
         defaultSubcommand: Status.self
     )
