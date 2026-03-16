@@ -21,6 +21,7 @@ struct SR: ParsableCommand {
             Screen.self,
             Windows.self,
             Detect.self,
+            Session.self,
         ],
         defaultSubcommand: Status.self
     )

@@ -57,6 +57,20 @@ class AgentRouter {
         case "annotate.list":
             return listAnnotations()
 
+        // Sessions
+        case "session.new":
+            return createSession(params: params)
+        case "session.list":
+            return listSessions()
+        case "session.switch":
+            return switchSession(params: params)
+        case "session.delete":
+            return deleteSession(params: params)
+        case "session.save":
+            return saveSession()
+        case "session.export":
+            return exportSession(params: params)
+
         // Screenshot
         case "screenshot.capture":
             return try await captureScreenshot(params: params)
@@ -570,6 +584,102 @@ class AgentRouter {
             return dict
         }
         return ["strokes": strokes, "count": strokes.count]
+    }
+
+    // MARK: - Sessions
+
+    private func createSession(params: [String: Any]?) -> [String: Any] {
+        guard let state = appState else { return ["ok": false] }
+        let name = params?["name"] as? String ?? "Session \(state.annotationState.sessions.count + 1)"
+        let fromCurrent = params?["from_current"] as? Bool ?? false
+        let session = state.annotationState.createSession(name: name, fromCurrent: fromCurrent)
+        state.annotationState.switchToSession(id: session.id)
+        return [
+            "ok": true,
+            "session_id": session.id.uuidString,
+            "name": session.name,
+            "stroke_count": session.strokes.count,
+        ]
+    }
+
+    private func listSessions() -> [String: Any] {
+        guard let state = appState else { return ["ok": false] }
+        state.annotationState.loadSessions()
+        let sessions = state.annotationState.sessions.map { session -> [String: Any] in
+            let formatter = ISO8601DateFormatter()
+            var dict: [String: Any] = [
+                "id": session.id.uuidString,
+                "name": session.name,
+                "stroke_count": session.strokes.count,
+                "created_at": formatter.string(from: session.createdAt),
+                "updated_at": formatter.string(from: session.updatedAt),
+            ]
+            if session.id == state.annotationState.activeSessionId {
+                dict["active"] = true
+            }
+            return dict
+        }
+        return ["sessions": sessions, "count": sessions.count]
+    }
+
+    private func switchSession(params: [String: Any]?) -> [String: Any] {
+        guard let state = appState else { return ["ok": false] }
+        if let name = params?["name"] as? String {
+            if state.annotationState.switchToSession(name: name) {
+                return ["ok": true, "name": name, "stroke_count": state.annotationState.strokes.count]
+            }
+            return ["ok": false, "reason": "Session not found: \(name)"]
+        }
+        if let idStr = params?["id"] as? String, let id = UUID(uuidString: idStr) {
+            state.annotationState.switchToSession(id: id)
+            return ["ok": true, "id": idStr, "stroke_count": state.annotationState.strokes.count]
+        }
+        return ["ok": false, "reason": "Provide 'name' or 'id' parameter"]
+    }
+
+    private func deleteSession(params: [String: Any]?) -> [String: Any] {
+        guard let state = appState else { return ["ok": false] }
+        if let name = params?["name"] as? String {
+            if let session = state.annotationState.sessions.first(where: { $0.name.lowercased() == name.lowercased() }) {
+                state.annotationState.deleteSession(id: session.id)
+                return ["ok": true, "deleted": name]
+            }
+            return ["ok": false, "reason": "Session not found: \(name)"]
+        }
+        if let idStr = params?["id"] as? String, let id = UUID(uuidString: idStr) {
+            state.annotationState.deleteSession(id: id)
+            return ["ok": true, "deleted": idStr]
+        }
+        return ["ok": false, "reason": "Provide 'name' or 'id' parameter"]
+    }
+
+    private func saveSession() -> [String: Any] {
+        guard let state = appState else { return ["ok": false] }
+        state.annotationState.saveCurrentSession()
+        return ["ok": true, "stroke_count": state.annotationState.strokes.count]
+    }
+
+    private func exportSession(params: [String: Any]?) -> [String: Any] {
+        guard let state = appState else { return ["ok": false] }
+        // Export active session or by id/name
+        var targetId = state.annotationState.activeSessionId
+        if let name = params?["name"] as? String {
+            targetId = state.annotationState.sessions.first(where: { $0.name.lowercased() == name.lowercased() })?.id
+        } else if let idStr = params?["id"] as? String {
+            targetId = UUID(uuidString: idStr)
+        }
+        guard let id = targetId, let data = state.annotationState.exportSession(id: id),
+              let json = String(data: data, encoding: .utf8) else {
+            return ["ok": false, "reason": "Session not found or empty"]
+        }
+
+        // Optionally save to file
+        if let path = params?["output"] as? String {
+            try? data.write(to: URL(fileURLWithPath: path))
+            return ["ok": true, "file": path]
+        }
+
+        return ["ok": true, "json": json]
     }
 
     // MARK: - Screenshot

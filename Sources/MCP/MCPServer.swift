@@ -172,6 +172,36 @@ final class MCPServer {
                 }
                 result = try await callRPC(method: "tool.lineWidth", params: ["width": width])
 
+            case "screen_recorder_session_new":
+                var params: [String: Any] = [:]
+                if let name = arguments["name"] as? String { params["name"] = name }
+                if let fc = arguments["from_current"] as? Bool { params["from_current"] = fc }
+                result = try await callRPC(method: "session.new", params: params.isEmpty ? nil : params)
+
+            case "screen_recorder_session_list":
+                result = try await callRPC(method: "session.list")
+
+            case "screen_recorder_session_switch":
+                var params: [String: Any] = [:]
+                if let name = arguments["name"] as? String { params["name"] = name }
+                if let id = arguments["id"] as? String { params["id"] = id }
+                result = try await callRPC(method: "session.switch", params: params)
+
+            case "screen_recorder_session_delete":
+                var params: [String: Any] = [:]
+                if let name = arguments["name"] as? String { params["name"] = name }
+                if let id = arguments["id"] as? String { params["id"] = id }
+                result = try await callRPC(method: "session.delete", params: params)
+
+            case "screen_recorder_session_save":
+                result = try await callRPC(method: "session.save")
+
+            case "screen_recorder_session_export":
+                var params: [String: Any] = [:]
+                if let name = arguments["name"] as? String { params["name"] = name }
+                if let output = arguments["output"] as? String { params["output"] = output }
+                result = try await callRPC(method: "session.export", params: params.isEmpty ? nil : params)
+
             case "screen_recorder_usage":
                 let usage = licenseManager.currentUsage
                 result = [
@@ -417,6 +447,68 @@ final class MCPServer {
                     ]
                 ],
                 required: ["width"]
+            ),
+            toolDef(
+                name: "screen_recorder_session_new",
+                description: "Create a new annotation session. Optionally copy current annotations into it.",
+                properties: [
+                    "name": [
+                        "type": "string",
+                        "description": "Session name",
+                    ],
+                    "from_current": [
+                        "type": "boolean",
+                        "description": "If true, copy current canvas annotations into the new session. Default: false",
+                    ],
+                ]
+            ),
+            toolDef(
+                name: "screen_recorder_session_list",
+                description: "List all saved annotation sessions with name, stroke count, and active status.",
+                properties: [:]
+            ),
+            toolDef(
+                name: "screen_recorder_session_switch",
+                description: "Switch to a named annotation session. Saves current session, loads target.",
+                properties: [
+                    "name": [
+                        "type": "string",
+                        "description": "Session name to switch to",
+                    ],
+                    "id": [
+                        "type": "string",
+                        "description": "Session UUID (alternative to name)",
+                    ],
+                ]
+            ),
+            toolDef(
+                name: "screen_recorder_session_delete",
+                description: "Delete a saved annotation session.",
+                properties: [
+                    "name": [
+                        "type": "string",
+                        "description": "Session name to delete",
+                    ],
+                ]
+            ),
+            toolDef(
+                name: "screen_recorder_session_save",
+                description: "Save current annotations to the active session.",
+                properties: [:]
+            ),
+            toolDef(
+                name: "screen_recorder_session_export",
+                description: "Export a session as JSON. Returns JSON string or saves to file.",
+                properties: [
+                    "name": [
+                        "type": "string",
+                        "description": "Session name (default: active session)",
+                    ],
+                    "output": [
+                        "type": "string",
+                        "description": "File path to save JSON (default: return in response)",
+                    ],
+                ]
             ),
             toolDef(
                 name: "screen_recorder_usage",
