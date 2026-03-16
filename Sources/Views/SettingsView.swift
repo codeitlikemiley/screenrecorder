@@ -6,6 +6,7 @@ struct SettingsView: View {
     @ObservedObject var appState: AppState
     @StateObject private var aiManager = AIProviderManager.shared
     @StateObject private var licenseActivator = LicenseActivator.shared
+    @StateObject private var cliInstaller = CLIInstaller.shared
     @State private var licenseKeyInput: String = ""
 
     var body: some View {
@@ -109,6 +110,66 @@ struct SettingsView: View {
                             Text(success)
                                 .font(.system(size: 11))
                                 .foregroundStyle(.green)
+                        }
+                    }
+
+                    // CLI Tools
+                    settingsSection(title: "CLI Tools", icon: "terminal") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Image(systemName: cliInstaller.srInstalled ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                    .foregroundStyle(cliInstaller.srInstalled ? .green : .secondary)
+                                    .font(.system(size: 14))
+                                Text("sr")
+                                    .font(.system(size: 13, design: .monospaced))
+                                Spacer()
+                                if cliInstaller.srInstalled {
+                                    Text("/usr/local/bin/sr")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+
+                            HStack(spacing: 8) {
+                                Image(systemName: cliInstaller.mcpInstalled ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                    .foregroundStyle(cliInstaller.mcpInstalled ? .green : .secondary)
+                                    .font(.system(size: 14))
+                                Text("sr-mcp")
+                                    .font(.system(size: 13, design: .monospaced))
+                                Spacer()
+                                if cliInstaller.mcpInstalled {
+                                    Text("/usr/local/bin/sr-mcp")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+
+                            HStack(spacing: 8) {
+                                if cliInstaller.srInstalled && cliInstaller.mcpInstalled {
+                                    Button("Uninstall CLI Tools") {
+                                        cliInstaller.uninstall()
+                                    }
+                                    .controlSize(.small)
+                                    .foregroundStyle(.red)
+                                } else {
+                                    Button(action: { cliInstaller.install() }) {
+                                        if cliInstaller.isInstalling {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                        } else {
+                                            Text("Install CLI Tools")
+                                        }
+                                    }
+                                    .disabled(cliInstaller.isInstalling)
+                                    .controlSize(.small)
+                                }
+                            }
+
+                            if let msg = cliInstaller.statusMessage {
+                                Text(msg)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(msg.contains("success") ? .green : .red)
+                            }
                         }
                     }
 

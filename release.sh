@@ -63,6 +63,12 @@ RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 rm -rf "${APP_DIR}"
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 cp "${BINARY}" "${MACOS_DIR}/${APP_NAME}"
+
+# Bundle CLI and MCP inside .app (signed together = no Gatekeeper issues)
+cp .build/release/sr "${MACOS_DIR}/sr"
+cp .build/release/sr-mcp "${MACOS_DIR}/sr-mcp"
+echo "   ✅ sr and sr-mcp bundled in .app"
+
 cp Resources/Info.plist "${CONTENTS_DIR}/Info.plist"
 
 # App icon

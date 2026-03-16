@@ -2,8 +2,8 @@ import Foundation
 import SwiftUI
 
 /// Lightweight license activation for the main app.
-/// Shares ~/.screenrecorder/license.json with sr-mcp so activating
-/// in either place works for both.
+/// Uses SharedDefaults (UserDefaults suite) so the license is instantly
+/// available to sr CLI and sr-mcp without file sharing.
 @MainActor
 final class LicenseActivator: ObservableObject {
     static let shared = LicenseActivator()
@@ -15,9 +15,6 @@ final class LicenseActivator: ObservableObject {
     @Published var errorMessage: String?
     @Published var successMessage: String?
 
-    private let baseDir: URL
-    private let licensePath: URL
-
     /// License server URL — override via SR_LICENSE_SERVER env var
     private var serverURL: String {
         ProcessInfo.processInfo.environment["SR_LICENSE_SERVER"]
@@ -25,11 +22,8 @@ final class LicenseActivator: ObservableObject {
     }
 
     private init() {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        baseDir = home.appendingPathComponent(".screenrecorder")
-        licensePath = baseDir.appendingPathComponent("license.json")
-
-        try? FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
+        // Migrate from legacy JSON if needed
+        SharedDefaults.migrateFromJSON()
         loadCached()
     }
 
@@ -59,13 +53,11 @@ final class LicenseActivator: ObservableObject {
             let response = try JSONDecoder().decode(ValidationResponse.self, from: data)
 
             if response.valid {
-                let cache = LicenseFile(
+                SharedDefaults.saveLicense(
                     key: trimmed,
                     plan: response.plan,
-                    email: response.email,
-                    validatedAt: Date()
+                    email: response.email
                 )
-                try saveCache(cache)
                 plan = response.plan
                 email = response.email
                 isActivated = true
@@ -82,7 +74,7 @@ final class LicenseActivator: ObservableObject {
 
     /// Deactivate the local license.
     func deactivate() {
-        try? FileManager.default.removeItem(at: licensePath)
+        SharedDefaults.removeLicense()
         plan = "none"
         email = ""
         isActivated = false
@@ -93,30 +85,13 @@ final class LicenseActivator: ObservableObject {
     // MARK: - Cache
 
     private func loadCached() {
-        guard let data = try? Data(contentsOf: licensePath),
-              let cache = try? JSONDecoder().decode(LicenseFile.self, from: data)
-        else { return }
-
-        plan = cache.plan
-        email = cache.email
+        guard SharedDefaults.isActivated else { return }
+        plan = SharedDefaults.licensePlan
+        email = SharedDefaults.licenseEmail
         isActivated = true
     }
 
-    private func saveCache(_ cache: LicenseFile) throws {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(cache)
-        try data.write(to: licensePath, options: .atomic)
-    }
-
     // MARK: - Models
-
-    private struct LicenseFile: Codable {
-        let key: String
-        let plan: String
-        let email: String
-        let validatedAt: Date
-    }
 
     private struct ValidationResponse: Codable {
         let valid: Bool

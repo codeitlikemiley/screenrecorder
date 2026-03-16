@@ -1,8 +1,8 @@
 import Foundation
 
 /// Manages license key validation and local rate limiting.
-/// License data cached at ~/.screenrecorder/license.json
-/// Usage data tracked at ~/.screenrecorder/usage.json
+/// License data stored in shared UserDefaults suite (accessible by all app binaries).
+/// Usage data tracked at ~/.screenrecorder/usage.json (MCP-specific).
 final class LicenseManager {
     static let shared = LicenseManager()
 
@@ -11,11 +11,15 @@ final class LicenseManager {
     /// Grace period when server is unreachable: 7 days
     private let gracePeriod: TimeInterval = 7 * 24 * 60 * 60
 
+    /// Shared UserDefaults suite — same as the main app
+    private let suiteName = "com.codeitlikemiley.screenrecorder.shared"
+    private lazy var suite: UserDefaults = {
+        UserDefaults(suiteName: suiteName)!
+    }()
+
     private let baseDir: URL
-    private let licensePath: URL
     private let usagePath: URL
 
-    private var cachedLicense: LicenseCache?
     private var cachedUsage: UsageTracker?
     private var isRevalidating = false
 
@@ -28,15 +32,71 @@ final class LicenseManager {
     private init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         baseDir = home.appendingPathComponent(".screenrecorder")
-        licensePath = baseDir.appendingPathComponent("license.json")
         usagePath = baseDir.appendingPathComponent("usage.json")
 
-        // Create directory if needed
+        // Create directory if needed (for usage.json)
         try? FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
 
-        // Load cached data
-        cachedLicense = loadJSON(from: licensePath)
+        // Migrate from legacy license.json if needed
+        migrateFromJSON()
+
+        // Load usage data
         cachedUsage = loadJSON(from: usagePath)
+    }
+
+    // MARK: - UserDefaults License Access
+
+    private var storedKey: String? {
+        suite.string(forKey: "license_key")
+    }
+
+    private var storedPlan: String {
+        suite.string(forKey: "license_plan") ?? "none"
+    }
+
+    private var storedEmail: String {
+        suite.string(forKey: "license_email") ?? ""
+    }
+
+    private var storedValidatedAt: Date? {
+        suite.object(forKey: "license_validated_at") as? Date
+    }
+
+    private func saveLicense(key: String, plan: String, email: String) {
+        suite.set(key, forKey: "license_key")
+        suite.set(plan, forKey: "license_plan")
+        suite.set(email, forKey: "license_email")
+        suite.set(Date(), forKey: "license_validated_at")
+        suite.synchronize()
+    }
+
+    private func updatePlan(_ plan: String) {
+        suite.set(plan, forKey: "license_plan")
+        suite.set(Date(), forKey: "license_validated_at")
+        suite.synchronize()
+    }
+
+    private func removeLicense() {
+        suite.removeObject(forKey: "license_key")
+        suite.removeObject(forKey: "license_plan")
+        suite.removeObject(forKey: "license_email")
+        suite.removeObject(forKey: "license_validated_at")
+        suite.synchronize()
+    }
+
+    // MARK: - Migration
+
+    private func migrateFromJSON() {
+        guard storedKey == nil else { return }
+
+        let jsonPath = baseDir.appendingPathComponent("license.json")
+        guard let data = try? Data(contentsOf: jsonPath),
+              let legacy = try? JSONDecoder().decode(LicenseCache.self, from: data)
+        else { return }
+
+        saveLicense(key: legacy.key, plan: legacy.plan, email: legacy.email)
+        try? FileManager.default.removeItem(at: jsonPath)
+        fputs("Migrated license from license.json to UserDefaults suite\n", stderr)
     }
 
     // MARK: - License Activation
@@ -56,15 +116,14 @@ final class LicenseManager {
             throw LicenseError.invalid(response.reason ?? "unknown")
         }
 
+        saveLicense(key: key, plan: response.plan, email: response.email)
+
         let cache = LicenseCache(
             key: key,
             plan: response.plan,
             email: response.email,
             validatedAt: Date()
         )
-
-        cachedLicense = cache
-        saveJSON(cache, to: licensePath)
 
         // Reset usage on activation
         let usage = UsageTracker(date: todayString(), callCount: 0)
@@ -76,24 +135,23 @@ final class LicenseManager {
 
     /// Deactivate the local license
     func deactivate() {
-        cachedLicense = nil
-        try? FileManager.default.removeItem(at: licensePath)
+        removeLicense()
     }
 
     // MARK: - Revalidation
 
     /// Re-validate the cached license with the server if stale (>24h old).
-    /// On success, updates the local cache. On network failure, allows a
-    /// grace period of 7 days before forcing a downgrade.
     func revalidateIfNeeded() async {
-        guard let license = cachedLicense, !isRevalidating else { return }
+        guard let key = storedKey, !isRevalidating else { return }
 
-        let age = Date().timeIntervalSince(license.validatedAt)
+        let validatedAt = storedValidatedAt ?? Date.distantPast
+        let age = Date().timeIntervalSince(validatedAt)
         guard age > revalidationInterval else { return }
 
         isRevalidating = true
         defer { isRevalidating = false }
 
+        let currentPlan = storedPlan
         fputs("License cache is \(Int(age/3600))h old — revalidating...\n", stderr)
 
         do {
@@ -101,44 +159,28 @@ final class LicenseManager {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONEncoder().encode(["key": license.key])
+            request.httpBody = try JSONEncoder().encode(["key": key])
             request.timeoutInterval = 10
 
             let (data, _) = try await URLSession.shared.data(for: request)
             let response = try JSONDecoder().decode(LicenseValidationResponse.self, from: data)
 
             if response.valid {
-                let updated = LicenseCache(
-                    key: license.key,
-                    plan: response.plan,
-                    email: response.email,
-                    validatedAt: Date()
-                )
-                cachedLicense = updated
-                saveJSON(updated, to: licensePath)
-                if response.plan != license.plan {
-                    fputs("License plan changed: \(license.plan) → \(response.plan)\n", stderr)
+                saveLicense(key: key, plan: response.plan, email: response.email)
+                if response.plan != currentPlan {
+                    fputs("License plan changed: \(currentPlan) → \(response.plan)\n", stderr)
                 } else {
                     fputs("License revalidated — plan: \(response.plan)\n", stderr)
                 }
             } else {
-                // License is no longer valid — deactivate
                 fputs("License no longer valid: \(response.reason ?? "unknown"). Deactivating.\n", stderr)
                 deactivate()
             }
         } catch {
-            // Network error — check grace period
             fputs("Revalidation failed (\(error.localizedDescription)) — using cached plan\n", stderr)
             if age > gracePeriod {
                 fputs("Grace period (7d) exceeded — downgrading to free\n", stderr)
-                let downgraded = LicenseCache(
-                    key: license.key,
-                    plan: "free",
-                    email: license.email,
-                    validatedAt: license.validatedAt
-                )
-                cachedLicense = downgraded
-                saveJSON(downgraded, to: licensePath)
+                updatePlan("free")
             }
         }
     }
@@ -147,22 +189,20 @@ final class LicenseManager {
 
     /// Check if a tool call is allowed. Revalidates first if needed.
     func checkRateLimit() async -> Bool {
-        // Revalidate license if cache is stale
         await revalidateIfNeeded()
 
-        guard let license = cachedLicense else {
+        guard storedKey != nil else {
             return false // No license activated
         }
 
         // Pro users: unlimited
-        if license.plan == "pro" {
+        if storedPlan == "pro" {
             return true
         }
 
         // Free users: 100 calls/day
         var usage = cachedUsage ?? UsageTracker(date: todayString(), callCount: 0)
 
-        // Reset if new day
         if usage.date != todayString() {
             usage = UsageTracker(date: todayString(), callCount: 0)
         }
@@ -185,7 +225,7 @@ final class LicenseManager {
 
     /// Get current usage info
     var currentUsage: (used: Int, limit: Int, plan: String) {
-        let plan = cachedLicense?.plan ?? "none"
+        let plan = storedPlan
         let limit = plan == "pro" ? -1 : 100
         let usage = cachedUsage ?? UsageTracker(date: todayString(), callCount: 0)
         let used = usage.date == todayString() ? usage.callCount : 0
@@ -193,10 +233,18 @@ final class LicenseManager {
     }
 
     /// Whether a valid license is cached
-    var isActivated: Bool { cachedLicense != nil }
+    var isActivated: Bool { storedKey != nil }
 
     /// The cached license info
-    var license: LicenseCache? { cachedLicense }
+    var license: LicenseCache? {
+        guard let key = storedKey else { return nil }
+        return LicenseCache(
+            key: key,
+            plan: storedPlan,
+            email: storedEmail,
+            validatedAt: storedValidatedAt ?? Date()
+        )
+    }
 
     // MARK: - Helpers
 

@@ -91,6 +91,12 @@ jobs:
 
           mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
           cp ".build/xcode-release/Build/Products/Release/${APP_NAME}" "${MACOS_DIR}/${APP_NAME}"
+
+          # Bundle CLI and MCP inside .app
+          cp .build/sr "${MACOS_DIR}/sr"
+          cp .build/sr-mcp "${MACOS_DIR}/sr-mcp"
+          echo "✅ sr and sr-mcp bundled in .app"
+
           cp Resources/Info.plist "${CONTENTS_DIR}/Info.plist"
 
           [ -f "Resources/AppIcon.icns" ] && cp Resources/AppIcon.icns "${RESOURCES_DIR}/AppIcon.icns"

@@ -30,6 +30,11 @@ if [ ! -f "$BINARY" ]; then
     exit 1
 fi
 
+# Build CLI and MCP server
+echo "🔧 Building CLI (sr) and MCP server (sr-mcp)..."
+swift build --product sr 2>&1 | grep -E '(error:|Build)' || true
+swift build --product sr-mcp 2>&1 | grep -E '(error:|Build)' || true
+
 # Package .app bundle
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
@@ -38,6 +43,11 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 echo "📦 Packaging .app bundle..."
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BINARY" "$MACOS_DIR/ScreenRecorder"
+
+# Bundle CLI and MCP inside .app
+cp .build/debug/sr "$MACOS_DIR/sr" 2>/dev/null && echo "   ✅ sr bundled" || echo "   ⚠️  sr not found"
+cp .build/debug/sr-mcp "$MACOS_DIR/sr-mcp" 2>/dev/null && echo "   ✅ sr-mcp bundled" || echo "   ⚠️  sr-mcp not found"
+
 cp Resources/Info.plist "$CONTENTS_DIR/Info.plist"
 
 # Copy app icon if it exists
