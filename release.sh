@@ -85,6 +85,12 @@ for bundle in "${BUNDLES_DIR}"/*.bundle; do
 done
 echo "   ✅ App packaged"
 
+# Write license server URL into shared UserDefaults (for local testing)
+if [ -n "${SR_LICENSE_SERVER:-}" ]; then
+    echo "🌐 Setting license server URL: $SR_LICENSE_SERVER"
+    defaults write com.codeitlikemiley.screenrecorder.shared license_server_url "$SR_LICENSE_SERVER"
+fi
+
 # ─── Step 3: Code Sign ─────────────────────────────────────
 echo "🔏 Step 3/7: Signing with Developer ID (hardened runtime)..."
 codesign --force --sign "${SIGNING_IDENTITY}" \
