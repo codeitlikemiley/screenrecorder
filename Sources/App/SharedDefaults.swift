@@ -12,6 +12,7 @@ enum SharedDefaults {
     enum Keys {
         static let licenseKey = "license_key"
         static let licensePlan = "license_plan"
+        static let licenseServerURL = "license_server_url"
         static let licenseEmail = "license_email"
         static let licenseValidatedAt = "license_validated_at"
     }
@@ -36,6 +37,29 @@ enum SharedDefaults {
 
     static var isActivated: Bool {
         licenseKey != nil
+    }
+
+    /// License server URL — checks env var (CLI), then UserDefaults (GUI), then fallback
+    static var licenseServerURL: String {
+        // CLI binaries can use env var
+        if let env = ProcessInfo.processInfo.environment["SR_LICENSE_SERVER"], !env.isEmpty {
+            return env
+        }
+        // GUI app stores it in UserDefaults (set via Settings or build.sh)
+        if let stored = suite.string(forKey: Keys.licenseServerURL), !stored.isEmpty {
+            return stored
+        }
+        // Production fallback
+        return "https://license.screenrecorder.dev"
+    }
+
+    static func setLicenseServerURL(_ url: String) {
+        if url.isEmpty {
+            suite.removeObject(forKey: Keys.licenseServerURL)
+        } else {
+            suite.set(url, forKey: Keys.licenseServerURL)
+        }
+        suite.synchronize()
     }
 
     // MARK: - Write

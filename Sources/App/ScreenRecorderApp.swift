@@ -55,10 +55,22 @@ struct ScreenRecorderApp: App {
 struct MenuBarView: View {
     @ObservedObject var appState: AppState
     @ObservedObject var coordinator: RecordingCoordinator
+    @StateObject private var licenseActivator = LicenseActivator.shared
     @Environment(\.openSettings) private var openSettings
+
+    /// Whether recording features are unlocked
+    private var isLicensed: Bool { licenseActivator.isActivated }
 
     var body: some View {
         Group {
+            // License gate — prominent activate button when not licensed
+            if !isLicensed {
+                Button("🔑 Activate License") {
+                    openSettings()
+                }
+                Divider()
+            }
+
             if appState.isCountingDown {
                 HStack {
                     ProgressView()
@@ -74,6 +86,7 @@ struct MenuBarView: View {
                 Button("⏺ Start Recording  ⌘⇧S") {
                     Task { await coordinator.startRecording() }
                 }
+                .disabled(!isLicensed)
             }
 
             Divider()
@@ -94,6 +107,8 @@ struct MenuBarView: View {
                     }
                 }
             ))
+            .disabled(!isLicensed)
+
             Toggle("🎤 Microphone  ⌘⇧M", isOn: Binding(
                 get: { appState.isMicrophoneEnabled },
                 set: { newValue in
@@ -108,6 +123,8 @@ struct MenuBarView: View {
                     }
                 }
             ))
+            .disabled(!isLicensed)
+
             Toggle("⌨️ Keystroke Overlay  ⌘⇧K", isOn: Binding(
                 get: { appState.isKeystrokeOverlayEnabled },
                 set: { newValue in
@@ -122,6 +139,7 @@ struct MenuBarView: View {
                     }
                 }
             ))
+            .disabled(!isLicensed)
 
             // Show/hide camera preview during recording
             if appState.isRecording && appState.isCameraEnabled {
@@ -146,13 +164,15 @@ struct MenuBarView: View {
             // Annotation mode (works independently of recording)
             Divider()
             Toggle("✏️ Annotation Mode  ⌘⇧D", isOn: $appState.isAnnotationModeActive)
+                .disabled(!isLicensed)
             Button("🗑 Clear Annotations  ⌘⇧X") {
                 appState.annotationState.clearAll()
             }
-            .disabled(!appState.annotationState.hasContent)
+            .disabled(!isLicensed || !appState.annotationState.hasContent)
             Button("📸 Screenshot  ⌘⇧3") {
                 coordinator.captureAnnotationScreenshot()
             }
+            .disabled(!isLicensed)
 
             Divider()
 

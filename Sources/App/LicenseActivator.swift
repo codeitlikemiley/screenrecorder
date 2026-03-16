@@ -15,10 +15,9 @@ final class LicenseActivator: ObservableObject {
     @Published var errorMessage: String?
     @Published var successMessage: String?
 
-    /// License server URL — override via SR_LICENSE_SERVER env var
+    /// License server URL — resolved via SharedDefaults (env → UserDefaults → fallback)
     private var serverURL: String {
-        ProcessInfo.processInfo.environment["SR_LICENSE_SERVER"]
-            ?? "https://license.screenrecorder.dev"
+        SharedDefaults.licenseServerURL
     }
 
     private init() {

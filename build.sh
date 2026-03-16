@@ -83,5 +83,12 @@ spctl --add --label "ScreenRecorder" "$APP_DIR" 2>/dev/null || true
 echo "🔑 Resetting Accessibility permission for fresh CDHash..."
 tccutil reset Accessibility com.codeitlikemiley.screenrecorder 2>/dev/null || true
 
+# Write license server URL into shared UserDefaults (for GUI app)
+# In .env: SR_LICENSE_SERVER=http://localhost:3000
+if [ -n "${SR_LICENSE_SERVER:-}" ]; then
+    echo "🌐 Setting license server URL: $SR_LICENSE_SERVER"
+    defaults write com.codeitlikemiley.screenrecorder.shared license_server_url "$SR_LICENSE_SERVER"
+fi
+
 echo ""
 echo "✅ Done! Run:  open $APP_DIR"

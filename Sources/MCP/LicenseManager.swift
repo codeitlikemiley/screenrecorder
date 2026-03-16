@@ -23,10 +23,15 @@ final class LicenseManager {
     private var cachedUsage: UsageTracker?
     private var isRevalidating = false
 
-    /// Default license server URL — override via SR_LICENSE_SERVER env var
+    /// License server URL — checks env var, then shared UserDefaults, then fallback
     var licenseServerURL: String {
-        ProcessInfo.processInfo.environment["SR_LICENSE_SERVER"]
-            ?? "https://license.screenrecorder.dev"
+        if let env = ProcessInfo.processInfo.environment["SR_LICENSE_SERVER"], !env.isEmpty {
+            return env
+        }
+        if let stored = suite.string(forKey: "license_server_url"), !stored.isEmpty {
+            return stored
+        }
+        return "https://license.screenrecorder.dev"
     }
 
     private init() {

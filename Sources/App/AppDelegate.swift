@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Combine
 
 /// Application delegate for handling lifecycle events,
 /// global hotkey registration, and window management.
@@ -8,6 +9,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeyManager: GlobalHotkeyManager?
     private var appState: AppState?
     private var coordinator: RecordingCoordinator?
+    private var licenseCancellable: AnyCancellable?
 
     nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
         Task { @MainActor in
@@ -33,6 +35,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         self.appState = appState
         self.coordinator = coordinator
         setupHotkeys()
+
+        // Re-register hotkeys when license status changes
+        licenseCancellable = LicenseActivator.shared.$isActivated
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.setupHotkeys()
+                }
+            }
     }
 
     private func setupHotkeys() {
@@ -41,26 +52,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let manager = GlobalHotkeyManager()
         manager.appState = appState
 
-        // Not-recording: enable/disable with permissions
-        manager.onToggleRecording = { [weak coordinator] in
-            Task { @MainActor in
-                await coordinator?.toggleRecording()
+        let isLicensed = LicenseActivator.shared.isActivated
+
+        // Recording hotkeys — only when licensed
+        if isLicensed {
+            manager.onToggleRecording = { [weak coordinator] in
+                Task { @MainActor in
+                    await coordinator?.toggleRecording()
+                }
+            }
+            manager.onToggleCamera = { [weak coordinator] in
+                coordinator?.toggleCamera()
+            }
+            manager.onToggleKeystrokeMonitor = { [weak coordinator] in
+                coordinator?.toggleKeystrokeMonitor()
+            }
+            manager.onShowHideCamera = { [weak coordinator] in
+                coordinator?.overlayManager.toggleCamera()
+            }
+            manager.onMuteUnmuteMic = { [weak appState] in
+                appState?.isMicMuted.toggle()
+            }
+            manager.onToggleAnnotation = { [weak coordinator] in
+                coordinator?.toggleAnnotationMode()
+            }
+            manager.onClearAnnotations = { [weak coordinator] in
+                coordinator?.clearAnnotations()
+            }
+            manager.onAnnotationScreenshot = { [weak coordinator] in
+                coordinator?.captureAnnotationScreenshot()
             }
         }
-        manager.onToggleCamera = { [weak coordinator] in
-            coordinator?.toggleCamera()
-        }
-        manager.onToggleKeystrokeMonitor = { [weak coordinator] in
-            coordinator?.toggleKeystrokeMonitor()
-        }
 
-        // During-recording: show/hide and mute (no re-initialization)
-        manager.onShowHideCamera = { [weak coordinator] in
-            coordinator?.overlayManager.toggleCamera()
-        }
-        manager.onMuteUnmuteMic = { [weak appState] in
-            appState?.isMicMuted.toggle()
-        }
+        // Always-available hotkeys (licensed or not)
         manager.onOpenRecordingsFolder = { [weak appState] in
             guard let dir = appState?.saveDirectory else { return }
             NSWorkspace.shared.open(dir)
@@ -68,15 +92,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         manager.onOpenLibrary = { [weak appState] in
             guard let dir = appState?.saveDirectory else { return }
             LibraryWindowManager.shared.open(directory: dir)
-        }
-        manager.onToggleAnnotation = { [weak coordinator] in
-            coordinator?.toggleAnnotationMode()
-        }
-        manager.onClearAnnotations = { [weak coordinator] in
-            coordinator?.clearAnnotations()
-        }
-        manager.onAnnotationScreenshot = { [weak coordinator] in
-            coordinator?.captureAnnotationScreenshot()
         }
 
         manager.registerHotkeys()

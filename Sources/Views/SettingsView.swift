@@ -8,6 +8,7 @@ struct SettingsView: View {
     @StateObject private var licenseActivator = LicenseActivator.shared
     @StateObject private var cliInstaller = CLIInstaller.shared
     @State private var licenseKeyInput: String = ""
+    @State private var serverURLInput: String = SharedDefaults.licenseServerURL
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -110,6 +111,28 @@ struct SettingsView: View {
                             Text(success)
                                 .font(.system(size: 11))
                                 .foregroundStyle(.green)
+                        }
+
+                        // Server URL
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("License Server")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                            HStack(spacing: 8) {
+                                TextField("https://license.screenrecorder.dev", text: $serverURLInput)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .frame(maxWidth: 300)
+                                    .onSubmit {
+                                        SharedDefaults.setLicenseServerURL(serverURLInput)
+                                    }
+                                if serverURLInput != SharedDefaults.licenseServerURL {
+                                    Button("Save") {
+                                        SharedDefaults.setLicenseServerURL(serverURLInput)
+                                    }
+                                    .controlSize(.mini)
+                                }
+                            }
                         }
                     }
 
@@ -293,7 +316,19 @@ struct SettingsView: View {
             Spacer()
             if !granted {
                 Button("Grant") {
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy")!)
+                    switch name {
+                    case "Screen Recording":
+                        PermissionManager.shared.openSystemSettings(pane: "Privacy_ScreenCapture")
+                    case "Camera":
+                        Task { _ = await PermissionManager.shared.requestCameraPermission() }
+                    case "Microphone":
+                        Task { _ = await PermissionManager.shared.requestMicrophonePermission() }
+                    case "Accessibility":
+                        // This registers the app in the Accessibility list
+                        _ = PermissionManager.shared.requestAccessibilityPermission()
+                    default:
+                        PermissionManager.shared.openSystemSettings(pane: "Privacy")
+                    }
                 }
                 .controlSize(.mini)
             }
