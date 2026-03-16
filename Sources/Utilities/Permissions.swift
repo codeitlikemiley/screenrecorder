@@ -117,13 +117,17 @@ class PermissionManager {
         return AXIsProcessTrustedWithOptions(options)
     }
 
-    /// Called by the Settings Grant button. Opens System Settings to Accessibility
-    /// AND reveals the app in Finder so the user can easily select it when clicking "+".
+    /// Called by the Settings Grant button. Triggers the system accessibility prompt
+    /// which registers the app in the Accessibility list when "Open System Settings" is clicked.
+    /// Also reveals the app in Finder as backup if the user needs to click "+".
     func openAccessibilitySettings() {
-        // Open System Settings → Accessibility
-        openSystemSettings(pane: "Privacy_Accessibility")
+        // This is the key call — it shows the system dialog AND registers
+        // the app in the Accessibility list. The dialog's "Open System Settings"
+        // button properly navigates to where the app is listed.
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
 
-        // Reveal the running app in Finder so user can select it after clicking "+"
+        // Also reveal the app in Finder as backup
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             self.revealAppInFinder()
         }
