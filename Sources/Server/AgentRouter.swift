@@ -416,12 +416,34 @@ class AgentRouter {
 
     private func addAnnotations(params: [String: Any]?) throws -> [String: Any] {
         guard let state = appState else { throw AgentError.appNotReady }
-        guard let params = params else { throw AgentError.invalidParams("Missing params") }
+        guard var params = params else { throw AgentError.invalidParams("Missing params") }
 
         // Activate annotation mode if not already active
         if !state.isAnnotationModeActive {
             state.isAnnotationModeActive = true
             state.isAnnotationVisible = true
+        }
+
+        // Resolve window-relative coordinates if window_ref is provided
+        var windowOffset: CGPoint = .zero
+        if let windowRef = params["window_ref"] as? String {
+            // Try as app name first, then as window ID
+            if let wid = findWindowId(appName: windowRef),
+               let bounds = findWindowBounds(windowId: wid) {
+                windowOffset = bounds.origin
+            } else if let wid = Int(windowRef), let bounds = findWindowBounds(windowId: wid) {
+                windowOffset = bounds.origin
+            } else {
+                throw AgentError.invalidParams("Window not found: \(windowRef)")
+            }
+            params.removeValue(forKey: "window_ref")
+        } else if let windowRefId = params["window_ref_id"] as? Int {
+            if let bounds = findWindowBounds(windowId: windowRefId) {
+                windowOffset = bounds.origin
+            } else {
+                throw AgentError.invalidParams("Window ID not found: \(windowRefId)")
+            }
+            params.removeValue(forKey: "window_ref_id")
         }
 
         // Parse annotations from params
@@ -430,12 +452,22 @@ class AgentRouter {
 
         var added = 0
         for annotation in batch.annotations {
-            let stroke = convertToStroke(annotation)
+            var stroke = convertToStroke(annotation)
+            // Apply window offset to all points
+            if windowOffset != .zero {
+                stroke.points = stroke.points.map { point in
+                    CGPoint(x: point.x + windowOffset.x, y: point.y + windowOffset.y)
+                }
+            }
             state.annotationState.strokes.append(stroke)
             added += 1
         }
 
-        return ["ok": true, "added": added, "total": state.annotationState.strokes.count]
+        var result: [String: Any] = ["ok": true, "added": added, "total": state.annotationState.strokes.count]
+        if windowOffset != .zero {
+            result["window_offset"] = ["x": Double(windowOffset.x), "y": Double(windowOffset.y)]
+        }
+        return result
     }
 
     private func clearAnnotations() -> [String: Any] {

@@ -130,8 +130,26 @@ final class MCPServer {
                 result = try await callRPC(method: "screenshot.capture", params: rpcParams.isEmpty ? nil : rpcParams)
 
             case "screen_recorder_annotate":
-                let action = arguments["action"] as? String ?? "add"
-                result = try await callRPC(method: "annotate.\(action)", params: arguments)
+                var rpcParams = arguments
+                // Remove the "action" key — it's used only for routing
+                let action = rpcParams.removeValue(forKey: "action") as? String ?? "add"
+                // Pass window_ref through if present
+                result = try await callRPC(method: "annotate.\(action)", params: rpcParams.isEmpty ? nil : rpcParams)
+
+            case "screen_recorder_annotate_activate":
+                result = try await callRPC(method: "annotate.activate")
+
+            case "screen_recorder_annotate_deactivate":
+                result = try await callRPC(method: "annotate.deactivate")
+
+            case "screen_recorder_annotate_list":
+                result = try await callRPC(method: "annotate.list")
+
+            case "screen_recorder_annotate_undo":
+                result = try await callRPC(method: "annotate.undo")
+
+            case "screen_recorder_annotate_redo":
+                result = try await callRPC(method: "annotate.redo")
 
             case "screen_recorder_annotate_clear":
                 result = try await callRPC(method: "annotate.clear")
@@ -139,6 +157,20 @@ final class MCPServer {
             case "screen_recorder_tool":
                 let tool = arguments["tool"] as? String ?? "pen"
                 result = try await callRPC(method: "tool.select", params: ["tool": tool])
+
+            case "screen_recorder_tool_color":
+                guard let color = arguments["color"] as? String else {
+                    writeToolError(id: id, message: "Missing 'color' parameter")
+                    return
+                }
+                result = try await callRPC(method: "tool.color", params: ["color": color])
+
+            case "screen_recorder_tool_width":
+                guard let width = arguments["width"] else {
+                    writeToolError(id: id, message: "Missing 'width' parameter")
+                    return
+                }
+                result = try await callRPC(method: "tool.lineWidth", params: ["width": width])
 
             case "screen_recorder_usage":
                 let usage = licenseManager.currentUsage
@@ -300,31 +332,52 @@ final class MCPServer {
             ),
             toolDef(
                 name: "screen_recorder_annotate",
-                description: "Add an annotation to the screen. Supports arrows, rectangles, ellipses, text, and freehand drawing.",
+                description: "Add annotations to the screen. Supports arrows, rectangles, ellipses, lines, text, and freehand drawing. Coordinates are in screen points. Use window_ref to offset coordinates relative to a window.",
                 properties: [
                     "action": [
                         "type": "string",
                         "description": "The annotation action: add, undo, redo",
                         "enum": ["add", "undo", "redo"],
                     ],
-                    "type": [
-                        "type": "string",
-                        "description": "Annotation type for 'add': arrow, rectangle, ellipse, line, text, pen",
+                    "annotations": [
+                        "type": "array",
+                        "description": "Array of annotation objects. Each must have a 'type' (arrow/rectangle/ellipse/line/pen/text). Arrows/lines need 'from' and 'to' {x,y}. Shapes need 'origin' {x,y} and 'size' {width,height}. Text needs 'at' {x,y} and 'text'. All support optional 'color' and 'lineWidth'.",
                     ],
-                    "points": [
+                    "window_ref": [
                         "type": "string",
-                        "description": "Comma-separated coordinates (x1,y1,x2,y2) for shapes, or x,y for text",
+                        "description": "App name to use as coordinate reference. All annotation coordinates become relative to this window's origin. Use with detect_elements for precise placement.",
                     ],
-                    "color": [
-                        "type": "string",
-                        "description": "Color name: red, green, blue, yellow, white, black",
-                    ],
-                    "text": [
-                        "type": "string",
-                        "description": "Text content (for text annotations)",
+                    "window_ref_id": [
+                        "type": "integer",
+                        "description": "Window ID to use as coordinate reference (alternative to window_ref).",
                     ],
                 ],
                 required: ["action"]
+            ),
+            toolDef(
+                name: "screen_recorder_annotate_activate",
+                description: "Activate annotation mode (start accepting drawing input)",
+                properties: [:]
+            ),
+            toolDef(
+                name: "screen_recorder_annotate_deactivate",
+                description: "Deactivate annotation mode (stop accepting drawing input, keep existing annotations visible)",
+                properties: [:]
+            ),
+            toolDef(
+                name: "screen_recorder_annotate_list",
+                description: "List all current annotations with full geometry: bounding box, coordinates, length/angle (arrows/lines), area/center (shapes), color, and text content.",
+                properties: [:]
+            ),
+            toolDef(
+                name: "screen_recorder_annotate_undo",
+                description: "Undo the last annotation",
+                properties: [:]
+            ),
+            toolDef(
+                name: "screen_recorder_annotate_redo",
+                description: "Redo the last undone annotation",
+                properties: [:]
             ),
             toolDef(
                 name: "screen_recorder_annotate_clear",
@@ -342,6 +395,28 @@ final class MCPServer {
                     ]
                 ],
                 required: ["tool"]
+            ),
+            toolDef(
+                name: "screen_recorder_tool_color",
+                description: "Set the drawing color for annotations",
+                properties: [
+                    "color": [
+                        "type": "string",
+                        "description": "Color name (red, green, blue, yellow, orange, purple, white, black, cyan, magenta, pink) or hex (#RRGGBB)",
+                    ]
+                ],
+                required: ["color"]
+            ),
+            toolDef(
+                name: "screen_recorder_tool_width",
+                description: "Set the line width for drawing annotations (1-20)",
+                properties: [
+                    "width": [
+                        "type": "number",
+                        "description": "Line width in points (1-20)",
+                    ]
+                ],
+                required: ["width"]
             ),
             toolDef(
                 name: "screen_recorder_usage",
