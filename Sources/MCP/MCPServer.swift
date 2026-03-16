@@ -115,10 +115,22 @@ final class MCPServer {
                 result = try await callRPC(method: "elements.detect", params: rpcParams.isEmpty ? nil : rpcParams)
 
             case "screen_recorder_start":
-                result = try await callRPC(method: "record.start")
+                var rpcParams: [String: Any] = [:]
+                if let camera = arguments["camera"] as? Bool { rpcParams["camera"] = camera }
+                if let mic = arguments["mic"] as? Bool { rpcParams["mic"] = mic }
+                if let keystrokes = arguments["keystrokes"] as? Bool { rpcParams["keystrokes"] = keystrokes }
+                if let fps = arguments["fps"] as? Int { rpcParams["fps"] = fps }
+                if let mode = arguments["mode"] as? String { rpcParams["mode"] = mode }
+                result = try await callRPC(method: "record.start", params: rpcParams.isEmpty ? nil : rpcParams)
 
             case "screen_recorder_stop":
                 result = try await callRPC(method: "record.stop")
+
+            case "screen_recorder_pause":
+                result = try await callRPC(method: "record.pause")
+
+            case "screen_recorder_resume":
+                result = try await callRPC(method: "record.resume")
 
             case "screen_recorder_screenshot":
                 var rpcParams: [String: Any] = [:]
@@ -326,12 +338,44 @@ final class MCPServer {
             ),
             toolDef(
                 name: "screen_recorder_start",
-                description: "Start screen recording",
-                properties: [:]
+                description: "Start screen recording. Configure camera, microphone, keystroke overlay, frame rate, and recording mode.",
+                properties: [
+                    "camera": [
+                        "type": "boolean",
+                        "description": "Enable (true) or disable (false) camera overlay",
+                    ],
+                    "mic": [
+                        "type": "boolean",
+                        "description": "Enable (true) or disable (false) microphone",
+                    ],
+                    "keystrokes": [
+                        "type": "boolean",
+                        "description": "Enable (true) or disable (false) keystroke overlay",
+                    ],
+                    "fps": [
+                        "type": "integer",
+                        "description": "Frame rate: 15, 30, or 60",
+                    ],
+                    "mode": [
+                        "type": "string",
+                        "description": "Recording mode: 'normal' or 'ai' (AI mode captures interaction metadata)",
+                        "enum": ["normal", "ai"],
+                    ],
+                ]
             ),
             toolDef(
                 name: "screen_recorder_stop",
-                description: "Stop screen recording",
+                description: "Stop screen recording and save the video file",
+                properties: [:]
+            ),
+            toolDef(
+                name: "screen_recorder_pause",
+                description: "Pause the current recording",
+                properties: [:]
+            ),
+            toolDef(
+                name: "screen_recorder_resume",
+                description: "Resume a paused recording",
                 properties: [:]
             ),
             toolDef(

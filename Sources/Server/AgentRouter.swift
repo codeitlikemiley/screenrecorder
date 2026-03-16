@@ -35,9 +35,13 @@ class AgentRouter {
 
         // Recording
         case "record.start":
-            return try await startRecording()
+            return try await startRecording(params: params)
         case "record.stop":
             return try await stopRecording()
+        case "record.pause":
+            return pauseRecording()
+        case "record.resume":
+            return resumeRecording()
 
         // Annotation mode
         case "annotate.activate":
@@ -389,15 +393,33 @@ class AgentRouter {
 
     // MARK: - Recording
 
-    private func startRecording() async throws -> [String: Any] {
+    private func startRecording(params: [String: Any]?) async throws -> [String: Any] {
         guard let coordinator = coordinator else { throw AgentError.appNotReady }
         guard let state = appState, !state.isRecording else {
             return ["ok": false, "reason": "Already recording"]
         }
+
+        // Apply configuration from params
+        if let camera = params?["camera"] as? Bool {
+            state.isCameraEnabled = camera
+        }
+        if let mic = params?["mic"] as? Bool {
+            state.isMicrophoneEnabled = mic
+        }
+        if let keystrokes = params?["keystrokes"] as? Bool {
+            state.isKeystrokeOverlayEnabled = keystrokes
+        }
+        if let fps = params?["fps"] as? Int {
+            state.frameRate = fps
+        }
+
         await coordinator.toggleRecording()
-        // Wait briefly for recording to start
         try await Task.sleep(nanoseconds: 500_000_000)
-        return ["ok": true, "recording": appState?.isRecording ?? false]
+        return [
+            "ok": true,
+            "recording": appState?.isRecording ?? false,
+            "mode": state.recordingMode == .ai ? "ai" : "normal",
+        ]
     }
 
     private func stopRecording() async throws -> [String: Any] {
@@ -409,6 +431,24 @@ class AgentRouter {
         try await Task.sleep(nanoseconds: 1_000_000_000)
         let file = state.currentRecordingURL?.path ?? ""
         return ["ok": true, "file": file]
+    }
+
+    // MARK: - Pause / Resume
+
+    private func pauseRecording() -> [String: Any] {
+        guard let state = appState, state.isRecording else {
+            return ["ok": false, "reason": "Not recording"]
+        }
+        state.isPaused = true
+        return ["ok": true]
+    }
+
+    private func resumeRecording() -> [String: Any] {
+        guard let state = appState, state.isRecording else {
+            return ["ok": false, "reason": "Not recording"]
+        }
+        state.isPaused = false
+        return ["ok": true]
     }
 
     // MARK: - Annotation Mode
