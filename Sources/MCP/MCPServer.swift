@@ -113,10 +113,13 @@ final class MCPServer {
                 result = try await callRPC(method: "record.stop")
 
             case "screen_recorder_screenshot":
-                let outputPath = arguments["output_path"] as? String
                 var rpcParams: [String: Any] = [:]
-                if let path = outputPath { rpcParams["outputPath"] = path }
-                result = try await callRPC(method: "screenshot.capture", params: rpcParams)
+                if let path = arguments["output_path"] as? String { rpcParams["output"] = path }
+                if let region = arguments["region"] { rpcParams["region"] = region }
+                if let window = arguments["window"] as? String { rpcParams["window"] = window }
+                if let windowId = arguments["window_id"] as? Int { rpcParams["window_id"] = windowId }
+                if let clean = arguments["clean"] as? Bool { rpcParams["clean"] = clean }
+                result = try await callRPC(method: "screenshot.capture", params: rpcParams.isEmpty ? nil : rpcParams)
 
             case "screen_recorder_annotate":
                 let action = arguments["action"] as? String ?? "add"
@@ -241,12 +244,28 @@ final class MCPServer {
             ),
             toolDef(
                 name: "screen_recorder_screenshot",
-                description: "Capture a screenshot of the current screen",
+                description: "Capture a screenshot. Supports full screen, specific region, or specific window capture. Can optionally exclude annotation overlays.",
                 properties: [
                     "output_path": [
                         "type": "string",
-                        "description": "Optional file path to save the screenshot to",
-                    ]
+                        "description": "File path to save the screenshot to. Default: auto-generated temp file.",
+                    ],
+                    "region": [
+                        "type": "object",
+                        "description": "Capture a specific screen region. Properties: x, y, width, height (in screen points).",
+                    ],
+                    "window": [
+                        "type": "string",
+                        "description": "Capture a specific window by app name (case-insensitive substring match).",
+                    ],
+                    "window_id": [
+                        "type": "integer",
+                        "description": "Capture a specific window by its CGWindowID (from list_windows).",
+                    ],
+                    "clean": [
+                        "type": "boolean",
+                        "description": "If true, temporarily hides annotations during capture. Default: false (includes annotations).",
+                    ],
                 ]
             ),
             toolDef(

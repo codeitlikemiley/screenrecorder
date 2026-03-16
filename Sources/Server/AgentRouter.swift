@@ -306,40 +306,78 @@ class AgentRouter {
 
         let outputPath = params?["output"] as? String
         let returnBase64 = params?["base64"] as? Bool ?? (outputPath == nil)
+        let clean = params?["clean"] as? Bool ?? false
+        let windowName = params?["window"] as? String
+        let windowId = params?["window_id"] as? Int
 
         // Determine output file
         let outputURL: URL
         if let path = outputPath {
             outputURL = URL(fileURLWithPath: path)
         } else {
-            // Default to temp file
             let tempDir = FileManager.default.temporaryDirectory
             let filename = "screenshot_\(Int(Date().timeIntervalSince1970)).png"
             outputURL = tempDir.appendingPathComponent(filename)
         }
 
+        // If clean mode, hide annotations temporarily
+        let wasAnnotationVisible = appState?.isAnnotationVisible ?? false
+        if clean && wasAnnotationVisible {
+            appState?.isAnnotationVisible = false
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+
         // Hide toolbar during capture
         coordinator.overlayManager.hideAnnotationToolbarForCapture()
-        try await Task.sleep(nanoseconds: 150_000_000) // 150ms for window to update
+        try await Task.sleep(nanoseconds: 150_000_000)
 
-        guard let screen = NSScreen.main else { throw AgentError.captureError("No main screen") }
-        let screenRect = screen.frame
+        // Determine capture rect and window
+        let captureRect: CGRect
+        var captureWindowId: CGWindowID = kCGNullWindowID
+        var listOption: CGWindowListOption = .optionOnScreenOnly
+
+        if let regionDict = params?["region"] as? [String: Any] {
+            // Region capture
+            let x = regionDict["x"] as? Double ?? 0
+            let y = regionDict["y"] as? Double ?? 0
+            let w = regionDict["width"] as? Double ?? 0
+            let h = regionDict["height"] as? Double ?? 0
+            captureRect = CGRect(x: x, y: y, width: w, height: h)
+        } else if let windowId = windowId {
+            // Window capture by ID
+            captureWindowId = CGWindowID(windowId)
+            listOption = .optionIncludingWindow
+            captureRect = CGRect.null // auto-size to window
+        } else if let windowName = windowName {
+            // Window capture by app name — find the window ID
+            if let wid = findWindowId(appName: windowName) {
+                captureWindowId = CGWindowID(wid)
+                listOption = .optionIncludingWindow
+                captureRect = CGRect.null
+            } else {
+                restoreAfterCapture(coordinator: coordinator, wasVisible: wasAnnotationVisible, clean: clean)
+                throw AgentError.captureError("No window found for app: \(windowName)")
+            }
+        } else {
+            // Full screen
+            guard let screen = NSScreen.main else {
+                restoreAfterCapture(coordinator: coordinator, wasVisible: wasAnnotationVisible, clean: clean)
+                throw AgentError.captureError("No main screen")
+            }
+            captureRect = screen.frame
+        }
 
         guard let cgImage = CGWindowListCreateImage(
-            screenRect,
-            .optionOnScreenOnly,
-            kCGNullWindowID,
+            captureRect,
+            listOption,
+            captureWindowId,
             [.bestResolution]
         ) else {
-            if appState?.isAnnotationModeActive == true {
-                coordinator.overlayManager.showAnnotationToolbarAfterCapture()
-            }
+            restoreAfterCapture(coordinator: coordinator, wasVisible: wasAnnotationVisible, clean: clean)
             throw AgentError.captureError("CGWindowListCreateImage failed")
         }
 
-        if appState?.isAnnotationModeActive == true {
-            coordinator.overlayManager.showAnnotationToolbarAfterCapture()
-        }
+        restoreAfterCapture(coordinator: coordinator, wasVisible: wasAnnotationVisible, clean: clean)
 
         // Convert to PNG
         let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
@@ -347,7 +385,6 @@ class AgentRouter {
             throw AgentError.captureError("PNG encoding failed")
         }
 
-        // Save to file
         try pngData.write(to: outputURL)
 
         var result: [String: Any] = [
@@ -357,12 +394,36 @@ class AgentRouter {
             "height": cgImage.height,
         ]
 
-        // Optionally return base64
         if returnBase64 {
             result["base64"] = pngData.base64EncodedString()
         }
 
         return result
+    }
+
+    /// Find window ID by app name (first matching on-screen window).
+    private func findWindowId(appName: String) -> Int? {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+        for info in windowList {
+            let owner = info[kCGWindowOwnerName as String] as? String ?? ""
+            if owner.localizedCaseInsensitiveContains(appName) {
+                return info[kCGWindowNumber as String] as? Int
+            }
+        }
+        return nil
+    }
+
+    /// Restore annotation visibility and toolbar after screenshot capture.
+    private func restoreAfterCapture(coordinator: RecordingCoordinator, wasVisible: Bool, clean: Bool) {
+        if appState?.isAnnotationModeActive == true {
+            coordinator.overlayManager.showAnnotationToolbarAfterCapture()
+        }
+        if clean && wasVisible {
+            appState?.isAnnotationVisible = true
+        }
     }
 
     // MARK: - Tool Selection
