@@ -78,10 +78,8 @@ codesign --force --sign "$SIGNING_IDENTITY" \
 echo "📋 Registering execution policy..."
 spctl --add --label "ScreenRecorder" "$APP_DIR" 2>/dev/null || true
 
-# Reset stale Accessibility permission (CDHash changes on each rebuild)
-# This clears the old entry so the new binary gets a fresh permission grant
-echo "🔑 Resetting Accessibility permission for fresh CDHash..."
-tccutil reset Accessibility com.codeitlikemiley.screenrecorder 2>/dev/null || true
+# Note: Accessibility permissions are tied to CDHash. If permissions stop working
+# after rebuild, the user must re-add the app in System Settings → Accessibility.
 
 # Write license server URL into shared UserDefaults (for GUI app)
 # In .env: SR_LICENSE_SERVER=http://localhost:3000

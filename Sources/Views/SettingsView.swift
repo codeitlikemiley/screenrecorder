@@ -334,7 +334,7 @@ struct SettingsView: View {
                 }
             }
             if !granted && name == "Accessibility" {
-                Text("Click \"+\" in System Settings → Accessibility to add Screen Recorder, then toggle it on.")
+                Text("Click \"+\" in Accessibility, select the app from the Finder window that opens, then toggle it on.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

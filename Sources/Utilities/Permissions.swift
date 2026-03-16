@@ -117,14 +117,22 @@ class PermissionManager {
         return AXIsProcessTrustedWithOptions(options)
     }
 
-    /// Called by the Settings Grant button. Opens System Settings directly
-    /// to Accessibility where the user can click "+" to add the app.
+    /// Called by the Settings Grant button. Opens System Settings to Accessibility
+    /// AND reveals the app in Finder so the user can easily select it when clicking "+".
     func openAccessibilitySettings() {
-        // First trigger AXIsProcessTrustedWithOptions without prompt to register in TCC
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): false] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-        // Open directly to Accessibility pane
+        // Open System Settings → Accessibility
         openSystemSettings(pane: "Privacy_Accessibility")
+
+        // Reveal the running app in Finder so user can select it after clicking "+"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.revealAppInFinder()
+        }
+    }
+
+    /// Reveals the running app's .app bundle in Finder (highlighted).
+    func revealAppInFinder() {
+        let appURL = Bundle.main.bundleURL
+        NSWorkspace.shared.activateFileViewerSelecting([appURL])
     }
 
     // MARK: - Open System Settings
