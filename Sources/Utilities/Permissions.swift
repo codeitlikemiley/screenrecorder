@@ -112,31 +112,37 @@ class PermissionManager {
     /// Shows the system prompt dialog if not trusted.
     func requestAccessibilityPermission() -> Bool {
         if AXIsProcessTrusted() { return true }
-        // Show system dialog — don't also open Settings (causes two windows)
+        // Reset stale TCC entries first — entries get tied to code signatures
+        // and go stale on rebuild, preventing the app from appearing in the list
+        resetAccessibilityTCC()
+        // Show system dialog — clicking "Open System Settings" will now
+        // properly register and show the app in the Accessibility list
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
     }
 
     /// Called by the Settings Grant button. Triggers the system accessibility prompt
     /// which registers the app in the Accessibility list when "Open System Settings" is clicked.
-    /// Also reveals the app in Finder as backup if the user needs to click "+".
     func openAccessibilitySettings() {
-        // This is the key call — it shows the system dialog AND registers
-        // the app in the Accessibility list. The dialog's "Open System Settings"
-        // button properly navigates to where the app is listed.
+        // Reset stale TCC entries first
+        resetAccessibilityTCC()
+        // Show the system dialog — "Open System Settings" will add the app to the list
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
-
-        // Also reveal the app in Finder as backup
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.revealAppInFinder()
-        }
     }
 
-    /// Reveals the running app's .app bundle in Finder (highlighted).
-    func revealAppInFinder() {
-        let appURL = Bundle.main.bundleURL
-        NSWorkspace.shared.activateFileViewerSelecting([appURL])
+    /// Clears stale Accessibility TCC entries for this bundle ID.
+    /// TCC entries are tied to code signatures (CDHash) and go stale
+    /// when the app is rebuilt or updated with a different signature.
+    private func resetAccessibilityTCC() {
+        guard let bundleId = Bundle.main.bundleIdentifier else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+        process.arguments = ["reset", "Accessibility", bundleId]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
     }
 
     // MARK: - Open System Settings
