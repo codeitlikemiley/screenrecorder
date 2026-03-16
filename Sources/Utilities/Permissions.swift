@@ -108,16 +108,23 @@ class PermissionManager {
         return AXIsProcessTrusted()
     }
 
+    /// Called when a feature needs accessibility (e.g. keystroke overlay toggle).
+    /// Shows the system prompt dialog if not trusted.
     func requestAccessibilityPermission() -> Bool {
         if AXIsProcessTrusted() { return true }
-        // This shows the system dialog asking user to enable Accessibility
+        // Show system dialog — don't also open Settings (causes two windows)
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        let result = AXIsProcessTrustedWithOptions(options)
-        if !result {
-            // Also open System Settings directly as a fallback
-            openSystemSettings(pane: "Privacy_Accessibility")
-        }
-        return result
+        return AXIsProcessTrustedWithOptions(options)
+    }
+
+    /// Called by the Settings Grant button. Opens System Settings directly
+    /// to Accessibility where the user can click "+" to add the app.
+    func openAccessibilitySettings() {
+        // First trigger AXIsProcessTrustedWithOptions without prompt to register in TCC
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): false] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+        // Open directly to Accessibility pane
+        openSystemSettings(pane: "Privacy_Accessibility")
     }
 
     // MARK: - Open System Settings

@@ -307,30 +307,37 @@ struct SettingsView: View {
     // MARK: - Permission Row
 
     private func permissionRow(name: String, granted: Bool) -> some View {
-        HStack {
-            Image(systemName: granted ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .foregroundStyle(granted ? .green : .red)
-                .font(.system(size: 14))
-            Text(name)
-                .font(.system(size: 13))
-            Spacer()
-            if !granted {
-                Button("Grant") {
-                    switch name {
-                    case "Screen Recording":
-                        PermissionManager.shared.openSystemSettings(pane: "Privacy_ScreenCapture")
-                    case "Camera":
-                        Task { _ = await PermissionManager.shared.requestCameraPermission() }
-                    case "Microphone":
-                        Task { _ = await PermissionManager.shared.requestMicrophonePermission() }
-                    case "Accessibility":
-                        // This registers the app in the Accessibility list
-                        _ = PermissionManager.shared.requestAccessibilityPermission()
-                    default:
-                        PermissionManager.shared.openSystemSettings(pane: "Privacy")
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Image(systemName: granted ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundStyle(granted ? .green : .red)
+                    .font(.system(size: 14))
+                Text(name)
+                    .font(.system(size: 13))
+                Spacer()
+                if !granted {
+                    Button("Grant") {
+                        switch name {
+                        case "Screen Recording":
+                            PermissionManager.shared.openSystemSettings(pane: "Privacy_ScreenCapture")
+                        case "Camera":
+                            Task { _ = await PermissionManager.shared.requestCameraPermission() }
+                        case "Microphone":
+                            Task { _ = await PermissionManager.shared.requestMicrophonePermission() }
+                        case "Accessibility":
+                            PermissionManager.shared.openAccessibilitySettings()
+                        default:
+                            PermissionManager.shared.openSystemSettings(pane: "Privacy")
+                        }
                     }
+                    .controlSize(.mini)
                 }
-                .controlSize(.mini)
+            }
+            if !granted && name == "Accessibility" {
+                Text("Click \"+\" in System Settings → Accessibility to add Screen Recorder, then toggle it on.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
