@@ -373,7 +373,9 @@ sr shell "ls -la" --json            # JSON-formatted output
 
 ## MCP Server (AI Tool Integration)
 
-The MCP server (`sr-mcp`) is also bundled inside the app. It lets AI assistants (Claude Code, Cursor, Windsurf, etc.) control the app programmatically.
+The MCP server (`sr-mcp`) is bundled inside the app. It gives AI assistants (Claude Code, Cursor, Windsurf, etc.) **full programmatic control** — everything the CLI can do, the MCP server can do too.
+
+> **51 tools** across 10 categories: status, recording, screenshots, annotations, drawing, sessions, computer control, accessibility tree, shell execution, and safety.
 
 ### Setup
 
@@ -415,72 +417,132 @@ The MCP server (`sr-mcp`) is also bundled inside the app. It lets AI assistants 
 
 | Tool | Description |
 |------|-------------|
-| `screen_recorder_status` | Get current recording state, camera, mic, annotation mode |
-| `screen_recorder_screen_info` | Display resolution, scale factor, visible frame |
-| `screen_recorder_list_windows` | List windows with app name, title, bounds, ID |
-| `screen_recorder_focused_window` | Get the currently focused window |
+| `screen_recorder_status` | Get current state — recording, camera, mic, annotation mode, active session |
+| `screen_recorder_screen_info` | Display resolution, scale factor, visible frame (supports multi-monitor) |
+| `screen_recorder_list_windows` | List all windows with app name, title, bounds, window ID. Filter by `app` name |
+| `screen_recorder_focused_window` | Get the currently focused window (app, title, bounds, ID) |
 
-#### Element Detection
+#### Element Detection (Vision OCR)
 
 | Tool | Description |
 |------|-------------|
-| `screen_recorder_detect_elements` | OCR text detection via Vision framework — returns bounding boxes and center points for precise annotation placement |
+| `screen_recorder_detect_elements` | Detect text UI elements via macOS Vision. Returns bounding boxes, center points, and confidence scores. Filter by `window`, `window_id`, or `min_confidence` |
 
 #### Recording
 
 | Tool | Description |
 |------|-------------|
-| `screen_recorder_start` | Start recording (options: camera, mic, keystrokes, fps) |
-| `screen_recorder_stop` | Stop recording and save video |
-| `screen_recorder_pause` | Pause recording |
-| `screen_recorder_resume` | Resume recording |
+| `screen_recorder_start` | Start recording. Options: `camera` (bool), `mic` (bool), `keystrokes` (bool), `fps` (15/30/60) |
+| `screen_recorder_stop` | Stop recording and save video to disk |
+| `screen_recorder_pause` | Pause the current recording |
+| `screen_recorder_resume` | Resume a paused recording |
 
 #### Screenshots
 
 | Tool | Description |
 |------|-------------|
-| `screen_recorder_screenshot` | Capture full screen, region, or window (with/without annotations) |
+| `screen_recorder_screenshot` | Capture screenshot. Options: `output` (path), `window` (name), `window_id`, `region` (x,y,w,h), `clean` (hide annotations) |
 
 #### Annotations
 
 | Tool | Description |
 |------|-------------|
-| `screen_recorder_annotate` | Add annotations with window-relative coords (`window_ref`) |
-| `screen_recorder_annotate_activate` | Enter annotation mode |
-| `screen_recorder_annotate_deactivate` | Exit annotation mode |
-| `screen_recorder_annotate_list` | List strokes with geometry (bounds, length, angle, area) |
-| `screen_recorder_annotate_undo` | Undo last annotation |
-| `screen_recorder_annotate_redo` | Redo last undone annotation |
-| `screen_recorder_annotate_clear` | Clear all annotations |
+| `screen_recorder_annotate` | Add shapes: `arrow`, `rectangle`, `ellipse`, `line`, `pen`, `text`. Specify `points`, `color`, `line_width`, `window_ref` for window-relative coords |
+| `screen_recorder_annotate_activate` | Enter annotation mode (show toolbar) |
+| `screen_recorder_annotate_deactivate` | Exit annotation mode (hide toolbar) |
+| `screen_recorder_annotate_list` | List all strokes with full geometry — bounds, length, angle, area, color, type |
+| `screen_recorder_annotate_undo` | Undo last annotation stroke |
+| `screen_recorder_annotate_redo` | Redo last undone stroke |
+| `screen_recorder_annotate_clear` | Clear all annotations from the screen |
 
 #### Drawing Tool Settings
 
 | Tool | Description |
 |------|-------------|
-| `screen_recorder_tool` | Select drawing tool (pen, arrow, rectangle, etc.) |
-| `screen_recorder_tool_color` | Set drawing color (name or hex) |
-| `screen_recorder_tool_width` | Set line width (1-20) |
+| `screen_recorder_tool` | Select active tool: `pen`, `line`, `arrow`, `rectangle`, `ellipse`, `text`, `move` |
+| `screen_recorder_tool_color` | Set drawing color — named (`red`, `green`, `blue`, `yellow`) or hex (`#FF5500`) |
+| `screen_recorder_tool_width` | Set line width (1–20) |
 
-#### Sessions
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_session_new` | Create named session (optionally from current strokes) |
-| `screen_recorder_session_list` | List saved sessions |
-| `screen_recorder_session_switch` | Switch to a session (auto-saves current) |
-| `screen_recorder_session_delete` | Delete a session |
-| `screen_recorder_session_save` | Save current annotations to active session |
-| `screen_recorder_session_export` | Export session as JSON |
-
-#### License
+#### Annotation Sessions
 
 | Tool | Description |
 |------|-------------|
-| `screen_recorder_usage` | Check license plan and daily usage |
+| `screen_recorder_session_new` | Create named session. Options: `name` (required), `from_current` (copy existing strokes) |
+| `screen_recorder_session_list` | List all saved sessions with names and stroke counts |
+| `screen_recorder_session_switch` | Switch to a session by name (auto-saves current) |
+| `screen_recorder_session_delete` | Delete a session by name |
+| `screen_recorder_session_save` | Save current annotations to the active session |
+| `screen_recorder_session_export` | Export session as JSON. Options: `name`, `output` (file path) |
 
-### AI Agent Workflow Example
+#### Computer Control (Input Synthesis)
 
-An AI agent can use these tools together for precise UI documentation:
+AI agents can click, type, scroll, drag, launch apps, and run commands — everything needed to reproduce bugs or automate UI workflows. Requires macOS **Accessibility permission**.
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_click` | Click at `(x, y)`. Options: `window_ref` for window-relative coords |
+| `screen_recorder_right_click` | Right-click (context menu) at `(x, y)` |
+| `screen_recorder_double_click` | Double-click at `(x, y)` |
+| `screen_recorder_drag` | Drag from `(from_x, from_y)` to `(to_x, to_y)`. Options: `duration`, `steps` |
+| `screen_recorder_scroll` | Scroll at `(x, y)` with `delta_x` / `delta_y`. Supports `window_ref` |
+| `screen_recorder_move_mouse` | Move cursor to `(x, y)` without clicking |
+| `screen_recorder_type_text` | Type text string. Options: `interval_ms` for typing speed |
+| `screen_recorder_press_key` | Press named key (`return`, `tab`, `space`, `delete`, `escape`, arrows, `f1`–`f12`). Supports `modifiers` |
+| `screen_recorder_hotkey` | Execute keyboard shortcut — `cmd+c`, `ctrl+shift+4`, `cmd+shift+z`, etc. |
+| `screen_recorder_click_element` | OCR detect text on screen → automatically click its center. Specify `text` and optional `window` |
+
+#### App Control
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_launch_app` | Launch app by `name` or `bundle_id` |
+| `screen_recorder_activate_app` | Bring app to foreground by `name` or `bundle_id` |
+| `screen_recorder_list_apps` | List all running applications (name, bundle ID, PID) |
+
+#### Shell Execution
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_run_command` | Execute shell command. Options: `command`, `timeout` (seconds). Returns `stdout`, `stderr`, `exit_code` |
+
+#### Accessibility Tree (AXUIElement)
+
+Go beyond OCR — discover and interact with real UI elements (buttons, text fields, menus, checkboxes) via the macOS Accessibility API. More reliable than coordinate-based clicks.
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_ax_tree` | Get the full UI element tree. Filter by `app`, `bundle_id`, or `pid`. Options: `max_depth` |
+| `screen_recorder_ax_find` | Find elements by `title` (substring) and/or `role` (`AXButton`, `AXTextField`, `AXCheckBox`, etc.) |
+| `screen_recorder_ax_press` | Press a UI element by `title` — triggers AXPress action, more reliable than coordinate clicks |
+| `screen_recorder_ax_set_value` | Set element value — type into text fields, toggle checkboxes, move sliders |
+| `screen_recorder_ax_focused` | Get the currently focused UI element with its role, title, value, and frame |
+| `screen_recorder_ax_actionable` | List all actionable elements in an app — buttons, fields, checkboxes with titles and actions |
+
+#### Accessibility Permission
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_check_accessibility` | Check if Accessibility permission is granted. Prompts the user if not |
+
+#### Safety System
+
+All computer control actions are gated by a safety system with kill switch (`⌘⌥⎋`), rate limiting, and audit logging.
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_safety_settings` | Get safety status — enabled, kill switch state, confirmation mode, rate limit, app allowlist |
+| `screen_recorder_safety_configure` | Configure: `enabled` (bool), `confirmation_mode` (bool), `max_actions_per_second` (default 10), `app_allowlist` (array) |
+| `screen_recorder_safety_log` | Audit log of recent actions — timestamps, descriptions, allowed/blocked status. Options: `count` (default 20) |
+
+#### License & Usage
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_usage` | Check license plan (free/pro), daily MCP tool call count, and remaining quota |
+
+### Workflow Examples
+
+**UI Documentation** — annotate and capture app screens:
 
 ```
 1. screen_recorder_list_windows       → Find target window (e.g. iOS Simulator)
@@ -490,57 +552,10 @@ An AI agent can use these tools together for precise UI documentation:
 5. screen_recorder_session_save       → Persist for later reference
 ```
 
-#### Computer Control (Input Synthesis)
-
-AI agents can control the computer to reproduce bugs, automate UI workflows, or interact with any application.
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_click` | Click at (x, y) coordinates |
-| `screen_recorder_right_click` | Right-click (context menu) |
-| `screen_recorder_double_click` | Double-click |
-| `screen_recorder_drag` | Drag from one point to another |
-| `screen_recorder_scroll` | Scroll at position (delta_x, delta_y) |
-| `screen_recorder_move_mouse` | Move cursor to position |
-| `screen_recorder_type_text` | Type text with configurable speed |
-| `screen_recorder_press_key` | Press named key (return, tab, escape, etc.) with modifiers |
-| `screen_recorder_hotkey` | Execute keyboard shortcut (e.g. `cmd+c`, `ctrl+shift+4`) |
-| `screen_recorder_click_element` | OCR detect text on screen → click its center |
-| `screen_recorder_launch_app` | Launch app by name or bundle ID |
-| `screen_recorder_activate_app` | Bring app to front |
-| `screen_recorder_list_apps` | List running applications |
-| `screen_recorder_run_command` | Execute shell command with timeout |
-| `screen_recorder_check_accessibility` | Check/request Accessibility permission |
-
-#### Accessibility Tree (AXUIElement)
-
-Go beyond OCR — discover and interact with real UI elements via the macOS Accessibility API.
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_ax_tree` | Get UI element tree of an app (roles, titles, frames, actions) |
-| `screen_recorder_ax_find` | Find elements by title (substring) or role (AXButton, AXTextField, etc.) |
-| `screen_recorder_ax_press` | Press a UI element by title — more reliable than coordinate clicks |
-| `screen_recorder_ax_set_value` | Set element value (type into text fields, set sliders) |
-| `screen_recorder_ax_focused` | Get the currently focused UI element |
-| `screen_recorder_ax_actionable` | List all actionable elements (buttons, fields, checkboxes) |
-
-#### Safety
-
-All computer control actions are gated by a safety system.
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_safety_settings` | Get safety status (kill switch, rate limit, allowlist, recent actions) |
-| `screen_recorder_safety_configure` | Configure: enable/disable, confirmation mode, rate limit, app allowlist |
-| `screen_recorder_safety_log` | Audit log of recent actions with timestamps and allowed/blocked status |
-
-### Bug Reproduction Workflow Example
-
-An AI agent can reproduce bugs step by step:
+**Bug Reproduction** — record step-by-step with computer control:
 
 ```
-1. screen_recorder_start              → Begin recording the reproduction
+1. screen_recorder_start              → Begin recording
 2. screen_recorder_launch_app         → Launch the target app
 3. screen_recorder_ax_find            → Find the relevant UI element
 4. screen_recorder_ax_press           → Click the button / menu item
@@ -548,6 +563,17 @@ An AI agent can reproduce bugs step by step:
 6. screen_recorder_hotkey             → Trigger keyboard shortcut
 7. screen_recorder_screenshot         → Capture the result
 8. screen_recorder_stop               → Stop recording
+```
+
+**Automated Testing** — interact with real UI elements programmatically:
+
+```
+1. screen_recorder_launch_app         → Launch app under test
+2. screen_recorder_ax_actionable      → List all interactive elements
+3. screen_recorder_ax_set_value       → Fill in form fields
+4. screen_recorder_ax_press           → Submit the form
+5. screen_recorder_run_command        → Run verification script
+6. screen_recorder_screenshot         → Capture final state
 ```
 
 ## Architecture
