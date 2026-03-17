@@ -30,6 +30,8 @@
     <string>Screen Recorder needs screen recording permission to capture your screen.</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>Screen Recorder uses Apple Events for accessibility features.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Screen Recorder needs Accessibility permission to control the computer for AI-driven actions (clicking, typing, scrolling) and bug reproduction workflows.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Screen Recorder uses speech recognition to transcribe your narration into step-by-step instructions.</string>
     <key>NSHumanReadableCopyright</key>

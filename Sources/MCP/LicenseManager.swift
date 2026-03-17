@@ -212,7 +212,7 @@ final class LicenseManager {
             usage = UsageTracker(date: todayString(), callCount: 0)
         }
 
-        return usage.callCount < 100
+        return usage.callCount < 10_000
     }
 
     /// Record a tool call
@@ -231,7 +231,7 @@ final class LicenseManager {
     /// Get current usage info
     var currentUsage: (used: Int, limit: Int, plan: String) {
         let plan = storedPlan
-        let limit = plan == "pro" ? -1 : 100
+        let limit = plan == "pro" ? -1 : 10_000
         let usage = cachedUsage ?? UsageTracker(date: todayString(), callCount: 0)
         let used = usage.date == todayString() ? usage.callCount : 0
         return (used, limit, plan)
@@ -300,7 +300,7 @@ enum LicenseError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalid(let reason): return "Invalid license: \(reason)"
-        case .rateLimited: return "Rate limit exceeded (100 calls/day on free plan). Upgrade at https://screenrecorder.dev"
+        case .rateLimited: return "Rate limit exceeded (10,000 calls/day on free plan). Upgrade at https://screenrecorder.dev"
         case .notActivated: return "No license activated. Run: sr activate YOUR-KEY"
         }
     }

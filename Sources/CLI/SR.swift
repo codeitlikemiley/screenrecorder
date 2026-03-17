@@ -22,6 +22,9 @@ struct SR: ParsableCommand {
             Windows.self,
             Detect.self,
             Session.self,
+            Input.self,
+            App.self,
+            Shell.self,
         ],
         defaultSubcommand: Status.self
     )

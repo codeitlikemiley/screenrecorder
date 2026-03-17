@@ -8,6 +8,7 @@ import Vision
 class AgentRouter {
     private weak var appState: AppState?
     private weak var coordinator: RecordingCoordinator?
+    private let inputSynthesizer = InputSynthesizer()
 
     init(appState: AppState, coordinator: RecordingCoordinator) {
         self.appState = appState
@@ -87,9 +88,88 @@ class AgentRouter {
         case "tool.lineWidth":
             return try setLineWidth(params: params)
 
+        // Input synthesis (computer control)
+        case "input.click":
+            return try inputClick(params: params)
+        case "input.right_click":
+            return try inputRightClick(params: params)
+        case "input.double_click":
+            return try inputDoubleClick(params: params)
+        case "input.middle_click":
+            return try inputMiddleClick(params: params)
+        case "input.drag":
+            return try inputDrag(params: params)
+        case "input.scroll":
+            return try inputScroll(params: params)
+        case "input.move_mouse":
+            return try inputMoveMouse(params: params)
+        case "input.type_text":
+            return try inputTypeText(params: params)
+        case "input.press_key":
+            return try inputPressKey(params: params)
+        case "input.hotkey":
+            return try inputHotkey(params: params)
+        case "input.click_element":
+            return try await inputClickElement(params: params)
+
+        // App control
+        case "app.launch":
+            return try launchApp(params: params)
+        case "app.activate":
+            return try activateApp(params: params)
+        case "app.list":
+            return listApps()
+
+        // Shell command execution
+        case "shell.exec":
+            return try execShellCommand(params: params)
+
+        // Accessibility permission
+        case "accessibility.check":
+            return checkAccessibility()
+
+        // Accessibility tree (AXUIElement)
+        case "ax.tree":
+            return axGetTree(params: params)
+        case "ax.find":
+            return axFindElements(params: params)
+        case "ax.press":
+            return axPressElement(params: params)
+        case "ax.set_value":
+            return axSetValue(params: params)
+        case "ax.focused":
+            return axFocusedElement()
+        case "ax.actionable":
+            return axActionableElements(params: params)
+
+        // Safety settings
+        case "safety.settings":
+            return SafetyGuard.shared.currentSettings()
+        case "safety.configure":
+            return configureSafety(params: params)
+        case "safety.log":
+            let count = params?["count"] as? Int ?? 20
+            return ["actions": SafetyGuard.shared.recentActions(count: count)]
+
         default:
             throw AgentError.methodNotFound(method)
         }
+    }
+
+    /// Gate check — returns an error result if the action is blocked, nil if allowed.
+    private func safetyGate(action: String, targetApp: String? = nil) -> [String: Any]? {
+        let (allowed, reason) = SafetyGuard.shared.checkAction(action, targetApp: targetApp)
+        if !allowed {
+            return ["ok": false, "error": reason ?? "Action blocked by safety guard"]
+        }
+        return nil
+    }
+
+    private func configureSafety(params: [String: Any]?) -> [String: Any] {
+        if let settings = params {
+            SafetyGuard.shared.configure(settings)
+        }
+        return ["ok": true, "settings": SafetyGuard.shared.currentSettings()]
     }
 
     // MARK: - Status
@@ -885,6 +965,416 @@ class AgentRouter {
 
         state.annotationState.lineWidth = max(1, min(20, width))
         return ["ok": true, "lineWidth": state.annotationState.lineWidth]
+    }
+
+    // MARK: - Input Synthesis (Computer Control)
+
+    /// Helper to resolve optional window-relative coordinates.
+    /// If window_ref or window_ref_id is provided, coordinates are offset by the window's origin.
+    private func resolveWindowOffset(params: [String: Any]?) -> CGPoint {
+        if let windowRef = params?["window_ref"] as? String {
+            if let wid = findWindowId(appName: windowRef),
+               let bounds = findWindowBounds(windowId: wid) {
+                return bounds.origin
+            }
+        } else if let windowRefId = params?["window_ref_id"] as? Int {
+            if let bounds = findWindowBounds(windowId: windowRefId) {
+                return bounds.origin
+            }
+        }
+        return .zero
+    }
+
+    /// Resolve a CGPoint from params, applying window offset if provided.
+    private func resolvePoint(x: Double, y: Double, offset: CGPoint) -> CGPoint {
+        return CGPoint(x: x + Double(offset.x), y: y + Double(offset.y))
+    }
+
+    private func inputClick(params: [String: Any]?) throws -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted. Open System Settings → Privacy & Security → Accessibility and add Screen Recorder."]
+        }
+        guard let x = params?["x"] as? Double, let y = params?["y"] as? Double else {
+            throw AgentError.invalidParams("Missing 'x' and 'y' coordinates")
+        }
+        let offset = resolveWindowOffset(params: params)
+        let point = resolvePoint(x: x, y: y, offset: offset)
+        let clickCount = params?["click_count"] as? Int ?? 1
+        if let blocked = safetyGate(action: "click at (\(Int(point.x)), \(Int(point.y)))") { return blocked }
+        inputSynthesizer.click(at: point, clickCount: clickCount)
+        return ["ok": true, "clicked_at": ["x": point.x, "y": point.y], "click_count": clickCount]
+    }
+
+    private func inputRightClick(params: [String: Any]?) throws -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let x = params?["x"] as? Double, let y = params?["y"] as? Double else {
+            throw AgentError.invalidParams("Missing 'x' and 'y' coordinates")
+        }
+        let offset = resolveWindowOffset(params: params)
+        let point = resolvePoint(x: x, y: y, offset: offset)
+        if let blocked = safetyGate(action: "right-click at (\(Int(point.x)), \(Int(point.y)))") { return blocked }
+        inputSynthesizer.rightClick(at: point)
+        return ["ok": true, "right_clicked_at": ["x": point.x, "y": point.y]]
+    }
+
+    private func inputDoubleClick(params: [String: Any]?) throws -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let x = params?["x"] as? Double, let y = params?["y"] as? Double else {
+            throw AgentError.invalidParams("Missing 'x' and 'y' coordinates")
+        }
+        let offset = resolveWindowOffset(params: params)
+        let point = resolvePoint(x: x, y: y, offset: offset)
+        if let blocked = safetyGate(action: "double-click at (\(Int(point.x)), \(Int(point.y)))") { return blocked }
+        inputSynthesizer.doubleClick(at: point)
+        return ["ok": true, "double_clicked_at": ["x": point.x, "y": point.y]]
+    }
+
+    private func inputMiddleClick(params: [String: Any]?) throws -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let x = params?["x"] as? Double, let y = params?["y"] as? Double else {
+            throw AgentError.invalidParams("Missing 'x' and 'y' coordinates")
+        }
+        let offset = resolveWindowOffset(params: params)
+        let point = resolvePoint(x: x, y: y, offset: offset)
+        if let blocked = safetyGate(action: "middle-click at (\(Int(point.x)), \(Int(point.y)))") { return blocked }
+        inputSynthesizer.middleClick(at: point)
+        return ["ok": true, "middle_clicked_at": ["x": point.x, "y": point.y]]
+    }
+
+    private func inputDrag(params: [String: Any]?) throws -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let fromX = params?["from_x"] as? Double, let fromY = params?["from_y"] as? Double,
+              let toX = params?["to_x"] as? Double, let toY = params?["to_y"] as? Double
+        else {
+            throw AgentError.invalidParams("Missing 'from_x', 'from_y', 'to_x', 'to_y' coordinates")
+        }
+        let offset = resolveWindowOffset(params: params)
+        let from = resolvePoint(x: fromX, y: fromY, offset: offset)
+        let to = resolvePoint(x: toX, y: toY, offset: offset)
+        let duration = params?["duration"] as? Double ?? 0.5
+        let steps = params?["steps"] as? Int ?? 20
+        if let blocked = safetyGate(action: "drag (\(Int(from.x)),\(Int(from.y))) → (\(Int(to.x)),\(Int(to.y)))") { return blocked }
+        inputSynthesizer.drag(from: from, to: to, duration: duration, steps: steps)
+        return ["ok": true, "dragged_from": ["x": from.x, "y": from.y], "dragged_to": ["x": to.x, "y": to.y]]
+    }
+
+    private func inputScroll(params: [String: Any]?) throws -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let x = params?["x"] as? Double, let y = params?["y"] as? Double else {
+            throw AgentError.invalidParams("Missing 'x' and 'y' coordinates")
+        }
+        let offset = resolveWindowOffset(params: params)
+        let point = resolvePoint(x: x, y: y, offset: offset)
+        let deltaX = Int32(params?["delta_x"] as? Double ?? 0)
+        let deltaY = Int32(params?["delta_y"] as? Double ?? 0)
+        guard deltaX != 0 || deltaY != 0 else {
+            throw AgentError.invalidParams("At least one of 'delta_x' or 'delta_y' must be non-zero")
+        }
+        if let blocked = safetyGate(action: "scroll at (\(Int(point.x)), \(Int(point.y))) dy=\(deltaY)") { return blocked }
+        inputSynthesizer.scroll(at: point, deltaX: deltaX, deltaY: deltaY)
+        return ["ok": true, "scrolled_at": ["x": point.x, "y": point.y], "delta_x": deltaX, "delta_y": deltaY]
+    }
+
+    private func inputMoveMouse(params: [String: Any]?) throws -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let x = params?["x"] as? Double, let y = params?["y"] as? Double else {
+            throw AgentError.invalidParams("Missing 'x' and 'y' coordinates")
+        }
+        let offset = resolveWindowOffset(params: params)
+        let point = resolvePoint(x: x, y: y, offset: offset)
+        if let blocked = safetyGate(action: "move mouse to (\(Int(point.x)), \(Int(point.y)))") { return blocked }
+        inputSynthesizer.moveMouse(to: point)
+        return ["ok": true, "moved_to": ["x": point.x, "y": point.y]]
+    }
+
+    private func inputTypeText(params: [String: Any]?) throws -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let text = params?["text"] as? String else {
+            throw AgentError.invalidParams("Missing 'text' parameter")
+        }
+        let intervalMs = params?["interval_ms"] as? Int ?? 50
+        if let blocked = safetyGate(action: "type text: \"\(text.prefix(50))\"") { return blocked }
+        inputSynthesizer.typeText(text, intervalMs: intervalMs)
+        return ["ok": true, "typed": text, "char_count": text.count]
+    }
+
+    private func inputPressKey(params: [String: Any]?) throws -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let key = params?["key"] as? String else {
+            throw AgentError.invalidParams("Missing 'key' parameter")
+        }
+
+        // Parse optional modifiers
+        var flags: CGEventFlags = []
+        if let modifiers = params?["modifiers"] as? [String] {
+            for mod in modifiers {
+                switch mod.lowercased() {
+                case "cmd", "command", "⌘": flags.insert(.maskCommand)
+                case "shift", "⇧":         flags.insert(.maskShift)
+                case "alt", "opt", "option", "⌥": flags.insert(.maskAlternate)
+                case "ctrl", "control", "⌃": flags.insert(.maskControl)
+                default: break
+                }
+            }
+        }
+
+        if let blocked = safetyGate(action: "press key: \(key)") { return blocked }
+        guard inputSynthesizer.pressNamedKey(key, modifiers: flags) else {
+            throw AgentError.invalidParams("Unknown key name: '\(key)'. Valid: return, tab, space, delete, escape, up, down, left, right, home, end, pageup, pagedown, f1-f12")
+        }
+        return ["ok": true, "pressed": key]
+    }
+
+    private func inputHotkey(params: [String: Any]?) throws -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let hotkeyString = params?["keys"] as? String else {
+            throw AgentError.invalidParams("Missing 'keys' parameter (e.g. 'cmd+c', 'ctrl+shift+4')")
+        }
+        if let blocked = safetyGate(action: "hotkey: \(hotkeyString)") { return blocked }
+        guard inputSynthesizer.parseAndExecuteHotkey(hotkeyString) else {
+            throw AgentError.invalidParams("Could not parse hotkey: '\(hotkeyString)'. Format: 'cmd+c', 'ctrl+shift+a'")
+        }
+        return ["ok": true, "executed": hotkeyString]
+    }
+
+    private func inputClickElement(params: [String: Any]?) async throws -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let text = params?["text"] as? String else {
+            throw AgentError.invalidParams("Missing 'text' parameter — the element text to find and click")
+        }
+
+        // Use element detection to find the text
+        var detectParams: [String: Any] = ["min_confidence": 0.5]
+        if let window = params?["window"] as? String { detectParams["window"] = window }
+        if let windowId = params?["window_id"] as? Int { detectParams["window_id"] = windowId }
+
+        let result = try await detectElements(params: detectParams)
+        guard let elements = result["elements"] as? [[String: Any]] else {
+            return ["ok": false, "error": "Element detection returned no results"]
+        }
+
+        // Find element matching the text (case-insensitive, substring match)
+        let searchText = text.lowercased()
+        guard let match = elements.first(where: {
+            ($0["text"] as? String ?? "").lowercased().contains(searchText)
+        }) else {
+            let available = elements.compactMap { $0["text"] as? String }.prefix(10)
+            return ["ok": false, "error": "Element '\(text)' not found", "available_elements": Array(available)]
+        }
+
+        // Get center coordinates of the matched element
+        guard let center = match["center"] as? [String: Any],
+              let cx = center["x"] as? Double,
+              let cy = center["y"] as? Double else {
+            return ["ok": false, "error": "Element found but has no center coordinates"]
+        }
+
+        let clickCount = params?["click_count"] as? Int ?? 1
+        inputSynthesizer.click(at: CGPoint(x: cx, y: cy), clickCount: clickCount)
+
+        return [
+            "ok": true,
+            "clicked_element": match["text"] ?? text,
+            "clicked_at": ["x": cx, "y": cy],
+            "click_count": clickCount,
+            "confidence": match["confidence"] ?? 0,
+        ]
+    }
+
+    // MARK: - App Control
+
+    private func launchApp(params: [String: Any]?) throws -> [String: Any] {
+        guard let name = params?["name"] as? String else {
+            throw AgentError.invalidParams("Missing 'name' parameter (app name or bundle identifier)")
+        }
+        if InputSynthesizer.launchApp(named: name) {
+            return ["ok": true, "launched": name]
+        }
+        return ["ok": false, "error": "Could not launch app: \(name)"]
+    }
+
+    private func activateApp(params: [String: Any]?) throws -> [String: Any] {
+        guard let name = params?["name"] as? String else {
+            throw AgentError.invalidParams("Missing 'name' parameter")
+        }
+        if InputSynthesizer.activateApp(named: name) {
+            return ["ok": true, "activated": name]
+        }
+        return ["ok": false, "error": "Could not activate app: \(name). Is it running?"]
+    }
+
+    private func listApps() -> [String: Any] {
+        let apps = InputSynthesizer.listRunningApps()
+        return ["apps": apps, "count": apps.count]
+    }
+
+    // MARK: - Shell Command Execution
+
+    private func execShellCommand(params: [String: Any]?) throws -> [String: Any] {
+        guard let command = params?["command"] as? String else {
+            throw AgentError.invalidParams("Missing 'command' parameter")
+        }
+        let timeout = params?["timeout"] as? Double ?? 30
+        return InputSynthesizer.runShellCommand(command, timeout: timeout)
+    }
+
+    // MARK: - Accessibility Permission
+
+    private func checkAccessibility() -> [String: Any] {
+        let granted = InputSynthesizer.checkAccessibilityPermission()
+        if !granted {
+            // Trigger the permission prompt
+            InputSynthesizer.requestAccessibilityPermission()
+        }
+        return [
+            "granted": granted,
+            "message": granted
+                ? "Accessibility permission is granted. Computer control is available."
+                : "Accessibility permission not granted. A system dialog should have appeared. Please grant access in System Settings → Privacy & Security → Accessibility, then restart the app.",
+        ]
+    }
+
+    // MARK: - Accessibility Tree (AXUIElement)
+
+    /// Resolve the root AXUIElement from params (app name, bundle_id, or pid).
+    /// Falls back to the focused application.
+    private func resolveAXRoot(params: [String: Any]?) -> AXUIElement? {
+        if let appName = params?["app"] as? String {
+            return AccessibilityBridge.appElement(named: appName)
+        } else if let bundleId = params?["bundle_id"] as? String {
+            return AccessibilityBridge.appElement(bundleId: bundleId)
+        } else if let pid = params?["pid"] as? Int {
+            return AccessibilityBridge.appElement(pid: pid_t(pid))
+        } else {
+            return AccessibilityBridge.focusedApplication()
+        }
+    }
+
+    private func axGetTree(params: [String: Any]?) -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let root = resolveAXRoot(params: params) else {
+            return ["ok": false, "error": "Could not find the target application"]
+        }
+
+        let maxDepth = params?["max_depth"] as? Int ?? 3
+        let tree = AccessibilityBridge.serialize(root, includeChildren: true, maxDepth: maxDepth)
+        return ["ok": true, "tree": tree]
+    }
+
+    private func axFindElements(params: [String: Any]?) -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let root = resolveAXRoot(params: params) else {
+            return ["ok": false, "error": "Could not find the target application"]
+        }
+
+        // Search by title or role
+        if let title = params?["title"] as? String {
+            if let element = AccessibilityBridge.findElement(in: root, withTitle: title) {
+                let serialized = AccessibilityBridge.serialize(element)
+                return ["ok": true, "found": true, "element": serialized]
+            }
+            return ["ok": true, "found": false, "error": "Element with title '\(title)' not found"]
+        }
+
+        if let role = params?["role"] as? String {
+            let maxResults = params?["max_results"] as? Int ?? 50
+            let elements = AccessibilityBridge.findElements(in: root, role: role, maxResults: maxResults)
+            let serialized = elements.map { AccessibilityBridge.serialize($0) }
+            return ["ok": true, "elements": serialized, "count": serialized.count]
+        }
+
+        return ["ok": false, "error": "Provide 'title' or 'role' to search for"]
+    }
+
+    private func axPressElement(params: [String: Any]?) -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let root = resolveAXRoot(params: params) else {
+            return ["ok": false, "error": "Could not find the target application"]
+        }
+        guard let title = params?["title"] as? String else {
+            return ["ok": false, "error": "Missing 'title' parameter — the element to press"]
+        }
+
+        guard let element = AccessibilityBridge.findElement(in: root, withTitle: title) else {
+            return ["ok": false, "error": "Element '\(title)' not found"]
+        }
+
+        let action = params?["action"] as? String ?? kAXPressAction as String
+        let success = AccessibilityBridge.performAction(action, on: element)
+        return ["ok": success, "pressed": title, "action": action]
+    }
+
+    private func axSetValue(params: [String: Any]?) -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let root = resolveAXRoot(params: params) else {
+            return ["ok": false, "error": "Could not find the target application"]
+        }
+        guard let title = params?["title"] as? String else {
+            return ["ok": false, "error": "Missing 'title' parameter — the element to set value on"]
+        }
+        guard let value = params?["value"] as? String else {
+            return ["ok": false, "error": "Missing 'value' parameter"]
+        }
+
+        guard let element = AccessibilityBridge.findElement(in: root, withTitle: title) else {
+            return ["ok": false, "error": "Element '\(title)' not found"]
+        }
+
+        let success = AccessibilityBridge.setValue(value, on: element)
+        return ["ok": success, "element": title, "value": value]
+    }
+
+    private func axFocusedElement() -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let element = AccessibilityBridge.focusedElement() else {
+            return ["ok": false, "error": "No focused element found"]
+        }
+        let serialized = AccessibilityBridge.serialize(element)
+        return ["ok": true, "element": serialized]
+    }
+
+    private func axActionableElements(params: [String: Any]?) -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let root = resolveAXRoot(params: params) else {
+            return ["ok": false, "error": "Could not find the target application"]
+        }
+
+        let maxDepth = params?["max_depth"] as? Int ?? 10
+        let maxResults = params?["max_results"] as? Int ?? 100
+        let elements = AccessibilityBridge.serializeActionableElements(of: root, maxDepth: maxDepth, maxResults: maxResults)
+        return ["ok": true, "elements": elements, "count": elements.count]
     }
 
     // MARK: - Annotation Conversion

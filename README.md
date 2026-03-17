@@ -21,6 +21,9 @@ A native macOS screen recorder designed for developers. Record your screen, came
 - **Global Hotkeys** — Fully customizable, works from any app
 - **HEVC (H.265)** — ~50% smaller files than H.264
 - **AI Step Generation** — Analyze recordings with OpenAI, Anthropic, Gemini, or any compatible API
+- **Computer Control** — AI-driven clicking, typing, scrolling, dragging, app launching, and shell commands
+- **Accessibility Tree** — Discover and interact with real UI elements (buttons, text fields, menus) via AXUIElement
+- **Safety System** — Kill switch hotkey (⌘⌥⎋), rate limiting, app allowlist, and full action audit log
 - **Recording Library** — Browse, re-process, and manage all past recordings
 - **CLI + MCP Server** — Bundled inside the app, installable from Settings
 - **License Gating** — Activate via CLI or in-app Settings; features lock until activated
@@ -88,7 +91,7 @@ Sign up at [screenrecorder.dev](https://screenrecorder.dev) to get your license 
 
 | Plan | MCP Tool Calls | Price |
 |------|---------------|-------|
-| Free | 100 / day | $0 |
+| Free | 10,000 / day | $0 |
 | Pro | Unlimited | $9/mo |
 
 ### Activate
@@ -129,6 +132,7 @@ All hotkeys are customizable in **Settings → Shortcuts**. Hotkeys only work wh
 | `⌘⇧H` | Show / Hide control bar |
 | `⌘⇧F` | Open recordings folder |
 | `⌘⇧L` | Recording Library |
+| `⌘⌥⎋` | Computer Control kill switch (toggle) |
 | `⌘⇧=` | Mic volume up |
 | `⌘⇧-` | Mic volume down |
 | `⌘⇧0` | Reset mic volume |
@@ -338,6 +342,35 @@ sr session export "Login Flow"         # Print JSON to stdout
 sr session export "Login Flow" -o flow.json  # Save to file
 ```
 
+### Computer Control
+
+Control the computer programmatically — click, type, scroll, launch apps, and run commands. Requires Accessibility permission (System Settings → Privacy & Security → Accessibility).
+
+```bash
+# Input synthesis
+sr input click 500 300              # Click at coordinates
+sr input right-click 500 300        # Right-click (context menu)
+sr input double-click 500 300       # Double-click
+sr input drag 100 200 500 300       # Drag from (100,200) to (500,300)
+sr input scroll 500 300 --dy -5     # Scroll down at position
+sr input move 500 300               # Move cursor
+sr input type "hello world"         # Type text
+sr input key return                 # Press named key (return, tab, space, escape, etc.)
+sr input hotkey cmd+c               # Keyboard shortcut
+sr input click-text "Submit"        # OCR detect text → click its center
+sr input check-access               # Check accessibility permission
+
+# App control
+sr app launch Safari                # Launch app by name or bundle ID
+sr app activate Safari              # Bring app to front
+sr app list                         # List running apps
+
+# Shell commands
+sr shell "echo hello"               # Run shell command
+sr shell "npm test" --timeout 60    # With timeout (seconds)
+sr shell "ls -la" --json            # JSON-formatted output
+```
+
 ## MCP Server (AI Tool Integration)
 
 The MCP server (`sr-mcp`) is also bundled inside the app. It lets AI assistants (Claude Code, Cursor, Windsurf, etc.) control the app programmatically.
@@ -455,6 +488,66 @@ An AI agent can use these tools together for precise UI documentation:
 3. screen_recorder_annotate           → Draw arrows/labels using window-relative coords
 4. screen_recorder_screenshot         → Capture annotated result
 5. screen_recorder_session_save       → Persist for later reference
+```
+
+#### Computer Control (Input Synthesis)
+
+AI agents can control the computer to reproduce bugs, automate UI workflows, or interact with any application.
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_click` | Click at (x, y) coordinates |
+| `screen_recorder_right_click` | Right-click (context menu) |
+| `screen_recorder_double_click` | Double-click |
+| `screen_recorder_drag` | Drag from one point to another |
+| `screen_recorder_scroll` | Scroll at position (delta_x, delta_y) |
+| `screen_recorder_move_mouse` | Move cursor to position |
+| `screen_recorder_type_text` | Type text with configurable speed |
+| `screen_recorder_press_key` | Press named key (return, tab, escape, etc.) with modifiers |
+| `screen_recorder_hotkey` | Execute keyboard shortcut (e.g. `cmd+c`, `ctrl+shift+4`) |
+| `screen_recorder_click_element` | OCR detect text on screen → click its center |
+| `screen_recorder_launch_app` | Launch app by name or bundle ID |
+| `screen_recorder_activate_app` | Bring app to front |
+| `screen_recorder_list_apps` | List running applications |
+| `screen_recorder_run_command` | Execute shell command with timeout |
+| `screen_recorder_check_accessibility` | Check/request Accessibility permission |
+
+#### Accessibility Tree (AXUIElement)
+
+Go beyond OCR — discover and interact with real UI elements via the macOS Accessibility API.
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_ax_tree` | Get UI element tree of an app (roles, titles, frames, actions) |
+| `screen_recorder_ax_find` | Find elements by title (substring) or role (AXButton, AXTextField, etc.) |
+| `screen_recorder_ax_press` | Press a UI element by title — more reliable than coordinate clicks |
+| `screen_recorder_ax_set_value` | Set element value (type into text fields, set sliders) |
+| `screen_recorder_ax_focused` | Get the currently focused UI element |
+| `screen_recorder_ax_actionable` | List all actionable elements (buttons, fields, checkboxes) |
+
+#### Safety
+
+All computer control actions are gated by a safety system.
+
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_safety_settings` | Get safety status (kill switch, rate limit, allowlist, recent actions) |
+| `screen_recorder_safety_configure` | Configure: enable/disable, confirmation mode, rate limit, app allowlist |
+| `screen_recorder_safety_log` | Audit log of recent actions with timestamps and allowed/blocked status |
+
+### Bug Reproduction Workflow Example
+
+An AI agent can reproduce bugs step by step:
+
+```
+1. screen_recorder_start              → Begin recording the reproduction
+2. screen_recorder_launch_app         → Launch the target app
+3. screen_recorder_ax_find            → Find the relevant UI element
+4. screen_recorder_ax_press           → Click the button / menu item
+5. screen_recorder_type_text          → Enter test data
+6. screen_recorder_hotkey             → Trigger keyboard shortcut
+7. screen_recorder_screenshot         → Capture the result
+8. screen_recorder_stop               → Stop recording
 ```
 
 ## Architecture

@@ -56,7 +56,7 @@ struct SettingsView: View {
                                         .font(.system(size: 12))
                                         .foregroundStyle(.green)
                                 } else {
-                                    Text("100 MCP tool calls / day")
+                                    Text("10,000 MCP tool calls / day")
                                         .font(.system(size: 12))
                                         .foregroundStyle(.secondary)
                                 }
