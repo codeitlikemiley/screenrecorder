@@ -92,7 +92,7 @@ Sign up at [screenrecorder.dev](https://screenrecorder.dev) to get your license 
 | Plan | MCP Tool Calls | Price |
 |------|---------------|-------|
 | Free | 10,000 / day | $0 |
-| Pro | Unlimited | $9/mo |
+| Pro | Unlimited | $8/mo |
 
 ### Activate
 
