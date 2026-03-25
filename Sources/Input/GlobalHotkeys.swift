@@ -4,9 +4,9 @@ import AppKit
 /// Registers global keyboard shortcut handlers using KeyboardShortcuts.
 /// Replaces the old HotKey-based GlobalHotkeyManager.
 ///
-/// Behavior changes based on recording state:
-/// - NOT recording: enable/disable features (with permission checks)
-/// - IS recording: show/hide or mute/unmute (no re-initialization)
+/// IMPORTANT: Annotation-only shortcuts (⌘1-7, ⌘Z, ⌘⇧Z, ⌘⇧X, ⌘⇧3) are registered
+/// ONLY while annotation mode is active, so they don't intercept keys in other apps
+/// (Warp, Safari, etc.) when the user is not annotating.
 @MainActor
 final class GlobalHotkeyManager {
 
@@ -24,7 +24,7 @@ final class GlobalHotkeyManager {
     var onClearAnnotations: (() -> Void)?
     var onAnnotationScreenshot: (() -> Void)?
 
-    // MARK: - Register
+    // MARK: - Register (always-on hotkeys)
 
     func registerHotkeys() {
         // ⌘⇧4 — Start/Stop Recording
@@ -127,85 +127,94 @@ final class GlobalHotkeyManager {
             self?.appState?.resetMicVolume()
         }
 
-        // ⌘⇧D — Toggle Annotation Mode
+        // ⌘⇧D — Toggle Annotation Mode (always global)
         KeyboardShortcuts.onKeyDown(for: .toggleAnnotation) { [weak self] in
             self?.onToggleAnnotation?()
         }
 
-        // ⌘⇧X — Clear All Annotations (only in annotation mode)
+        // NOTE: Annotation-only shortcuts (tools, undo/redo, clear, screenshot) are
+        // registered separately via registerAnnotationHotkeys() and only active
+        // while annotation mode is on. They must NOT be registered here.
+    }
+
+    // MARK: - Annotation-scoped hotkeys (only active during annotation mode)
+
+    /// Call this when annotation mode becomes active.
+    /// Registers shortcuts that would conflict with other apps when not annotating.
+    func registerAnnotationHotkeys() {
+        // ⌘⇧X — Clear All Annotations
         KeyboardShortcuts.onKeyDown(for: .clearAnnotations) { [weak self] in
-            guard let self, let state = self.appState,
-                  state.isAnnotationModeActive else { return }
-            self.onClearAnnotations?()
+            self?.onClearAnnotations?()
         }
 
-        // ⌘⇧3 — Annotation Screenshot (only in annotation mode)
+        // ⌘⇧3 — Annotation Screenshot
         KeyboardShortcuts.onKeyDown(for: .annotationScreenshot) { [weak self] in
-            guard let self, let state = self.appState,
-                  state.isAnnotationModeActive else { return }
-            self.onAnnotationScreenshot?()
+            self?.onAnnotationScreenshot?()
         }
 
-        // ⌘⇧⌥3 — Annotation Screenshot Alt (only in annotation mode)
+        // ⌘⇧⌥3 — Annotation Screenshot (Alt)
         KeyboardShortcuts.onKeyDown(for: .annotationScreenshotAlt) { [weak self] in
-            guard let self, let state = self.appState,
-                  state.isAnnotationModeActive else { return }
-            self.onAnnotationScreenshot?()
+            self?.onAnnotationScreenshot?()
         }
 
-        // ⌘1-7 — Per-tool shortcuts (only in annotation mode)
+        // ⌘1 — Pen Tool
         KeyboardShortcuts.onKeyDown(for: .toolPen) { [weak self] in
-            guard let self, let state = self.appState,
-                  state.isAnnotationModeActive else { return }
-            state.annotationState.selectedTool = .pen
+            self?.appState?.annotationState.selectedTool = .pen
         }
+        // ⌘2 — Line Tool
         KeyboardShortcuts.onKeyDown(for: .toolLine) { [weak self] in
-            guard let self, let state = self.appState,
-                  state.isAnnotationModeActive else { return }
-            state.annotationState.selectedTool = .line
+            self?.appState?.annotationState.selectedTool = .line
         }
+        // ⌘3 — Arrow Tool
         KeyboardShortcuts.onKeyDown(for: .toolArrow) { [weak self] in
-            guard let self, let state = self.appState,
-                  state.isAnnotationModeActive else { return }
-            state.annotationState.selectedTool = .arrow
+            self?.appState?.annotationState.selectedTool = .arrow
         }
+        // ⌘4 — Rectangle Tool
         KeyboardShortcuts.onKeyDown(for: .toolRectangle) { [weak self] in
-            guard let self, let state = self.appState,
-                  state.isAnnotationModeActive else { return }
-            state.annotationState.selectedTool = .rectangle
+            self?.appState?.annotationState.selectedTool = .rectangle
         }
+        // ⌘5 — Ellipse Tool
         KeyboardShortcuts.onKeyDown(for: .toolEllipse) { [weak self] in
-            guard let self, let state = self.appState,
-                  state.isAnnotationModeActive else { return }
-            state.annotationState.selectedTool = .ellipse
+            self?.appState?.annotationState.selectedTool = .ellipse
         }
+        // ⌘6 — Text Tool
         KeyboardShortcuts.onKeyDown(for: .toolText) { [weak self] in
-            guard let self, let state = self.appState,
-                  state.isAnnotationModeActive else { return }
-            state.annotationState.selectedTool = .text
+            self?.appState?.annotationState.selectedTool = .text
         }
+        // ⌘7 — Move Tool
         KeyboardShortcuts.onKeyDown(for: .toolMove) { [weak self] in
-            guard let self, let state = self.appState,
-                  state.isAnnotationModeActive else { return }
-            state.annotationState.selectedTool = .move
+            self?.appState?.annotationState.selectedTool = .move
         }
 
-        // ⌘Z — Undo Annotation (only in annotation mode)
+        // ⌘Z — Undo Annotation
         KeyboardShortcuts.onKeyDown(for: .annotationUndo) { [weak self] in
-            guard let self, let state = self.appState,
-                  state.isAnnotationModeActive else { return }
-            state.annotationState.undo()
+            self?.appState?.annotationState.undo()
         }
 
-        // ⌘⇧Z — Redo Annotation (only in annotation mode)
+        // ⌘⇧Z — Redo Annotation
         KeyboardShortcuts.onKeyDown(for: .annotationRedo) { [weak self] in
-            guard let self, let state = self.appState,
-                  state.isAnnotationModeActive else { return }
-            state.annotationState.redo()
+            self?.appState?.annotationState.redo()
         }
     }
 
-    // MARK: - Unregister
+    /// Call this when annotation mode is deactivated.
+    /// Releases all annotation-only shortcuts so other apps can use them freely.
+    func unregisterAnnotationHotkeys() {
+        KeyboardShortcuts.removeHandler(for: .clearAnnotations)
+        KeyboardShortcuts.removeHandler(for: .annotationScreenshot)
+        KeyboardShortcuts.removeHandler(for: .annotationScreenshotAlt)
+        KeyboardShortcuts.removeHandler(for: .toolPen)
+        KeyboardShortcuts.removeHandler(for: .toolLine)
+        KeyboardShortcuts.removeHandler(for: .toolArrow)
+        KeyboardShortcuts.removeHandler(for: .toolRectangle)
+        KeyboardShortcuts.removeHandler(for: .toolEllipse)
+        KeyboardShortcuts.removeHandler(for: .toolText)
+        KeyboardShortcuts.removeHandler(for: .toolMove)
+        KeyboardShortcuts.removeHandler(for: .annotationUndo)
+        KeyboardShortcuts.removeHandler(for: .annotationRedo)
+    }
+
+    // MARK: - Unregister All
 
     func unregisterHotkeys() {
         KeyboardShortcuts.removeAllHandlers()

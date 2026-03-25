@@ -535,14 +535,20 @@ class AgentRouter {
 
     private func activateAnnotation() -> [String: Any] {
         guard let state = appState else { return ["ok": false] }
-        state.isAnnotationModeActive = true
+        if !state.isAnnotationModeActive {
+            // Route through coordinator so onAnnotationModeChanged fires (registers hotkeys)
+            coordinator?.toggleAnnotationMode()
+        }
         state.isAnnotationVisible = true
         return ["ok": true]
     }
 
     private func deactivateAnnotation() -> [String: Any] {
         guard let state = appState else { return ["ok": false] }
-        state.isAnnotationModeActive = false
+        if state.isAnnotationModeActive {
+            // Route through coordinator so onAnnotationModeChanged fires (unregisters hotkeys)
+            coordinator?.toggleAnnotationMode()
+        }
         return ["ok": true]
     }
 
@@ -554,7 +560,7 @@ class AgentRouter {
 
         // Activate annotation mode if not already active
         if !state.isAnnotationModeActive {
-            state.isAnnotationModeActive = true
+            coordinator?.toggleAnnotationMode()  // fires onAnnotationModeChanged -> registers hotkeys
             state.isAnnotationVisible = true
         }
 

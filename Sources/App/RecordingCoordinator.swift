@@ -18,6 +18,10 @@ class RecordingCoordinator: ObservableObject {
     private var videoWriter: VideoWriter?
     private var isSetUp = false
 
+    /// Called whenever annotation mode changes. AppDelegate uses this to
+    /// register/unregister annotation-only global hotkeys.
+    var onAnnotationModeChanged: ((_ isActive: Bool) -> Void)?
+
     init(appState: AppState) {
         self.appState = appState
     }
@@ -288,7 +292,10 @@ class RecordingCoordinator: ObservableObject {
         mouseMonitor.stopMonitoring()
 
         // 4b. Deactivate annotation mode (keep strokes visible for review)
-        appState.isAnnotationModeActive = false
+        if appState.isAnnotationModeActive {
+            appState.isAnnotationModeActive = false
+            onAnnotationModeChanged?(false)
+        }
 
         // 5. Drain buffers
         try? await Task.sleep(nanoseconds: 200_000_000)
@@ -399,9 +406,9 @@ class RecordingCoordinator: ObservableObject {
     /// Toggle annotation drawing mode on/off
     func toggleAnnotationMode() {
         appState.isAnnotationModeActive.toggle()
-        print(appState.isAnnotationModeActive
-            ? "✏️ Annotation mode activated"
-            : "✏️ Annotation mode deactivated")
+        let isActive = appState.isAnnotationModeActive
+        onAnnotationModeChanged?(isActive)
+        print(isActive ? "✏️ Annotation mode activated" : "✏️ Annotation mode deactivated")
     }
 
     /// Clear all annotation strokes

@@ -10,6 +10,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var appState: AppState?
     private var coordinator: RecordingCoordinator?
     private var licenseCancellable: AnyCancellable?
+    private var annotationModeCancellable: AnyCancellable?
 
     nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
         Task { @MainActor in
@@ -42,6 +43,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in
                 Task { @MainActor in
                     self?.setupHotkeys()
+                }
+            }
+
+        // Observe annotation mode changes from ANY code path:
+        // coordinator, ControlBar, OverlayWindowManager toolbar close, AgentRouter, etc.
+        // When active → register annotation-only hotkeys so ⌘1-7, ⌘Z, etc. work.
+        // When inactive → release them so Warp / Safari / other apps get the keys.
+        annotationModeCancellable = appState.$isAnnotationModeActive
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] isActive in
+                guard let manager = self?.hotkeyManager else { return }
+                if isActive {
+                    manager.registerAnnotationHotkeys()
+                } else {
+                    manager.unregisterAnnotationHotkeys()
                 }
             }
     }
