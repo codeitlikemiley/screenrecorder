@@ -24,6 +24,11 @@ class RecordingCoordinator: ObservableObject {
 
     init(appState: AppState) {
         self.appState = appState
+        // Start the RPC server immediately so the CLI can connect as soon
+        // as the app launches — no need to click the menu bar icon first.
+        Task { @MainActor [weak self] in
+            self?.startAgentServer()
+        }
     }
 
     // MARK: - Setup (lightweight — NO permission prompts)
@@ -79,14 +84,21 @@ class RecordingCoordinator: ObservableObject {
         appState.hasAccessibilityPermission = PermissionManager.shared.checkAccessibilityPermission()
         appState.hasScreenPermission = true
 
-        // Start agent server for programmatic control
-        if appState.isAgentServerEnabled {
-            let router = AgentRouter(appState: appState, coordinator: self)
-            self.agentRouter = router
-            agentServer.start(router: router)
-        }
+        // Start agent server for programmatic control (idempotent — safe if already started)
+        startAgentServer()
 
         print("🎬 Setup complete!")
+    }
+
+    // MARK: - Agent Server
+
+    /// Start the JSON-RPC agent server. Safe to call multiple times — AgentServer
+    /// and this method both guard against double-start.
+    private func startAgentServer() {
+        guard appState.isAgentServerEnabled, agentRouter == nil else { return }
+        let router = AgentRouter(appState: appState, coordinator: self)
+        self.agentRouter = router
+        agentServer.start(router: router)
     }
 
     // MARK: - Start Recording
@@ -380,7 +392,7 @@ class RecordingCoordinator: ObservableObject {
     // MARK: - Helpers
 
     private func startKeystrokeMonitorWithPermissionCheck() {
-        let trusted = AXIsProcessTrusted()
+        let trusted = PermissionManager.shared.checkAccessibilityPermission()
         print("🔑 Accessibility check: AXIsProcessTrusted = \(trusted)")
 
         // Try to create the event tap first (might work even if AXIsProcessTrusted is false)
@@ -392,12 +404,14 @@ class RecordingCoordinator: ObservableObject {
             return
         }
 
-        // Tap failed — prompt the user ONCE to grant permission for this binary
-        print("⚠️ CGEvent tap failed, prompting for Accessibility permission...")
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-
-        appState.hasAccessibilityPermission = false
+        // Tap failed — request permission once per launch, then guide the user to restart
+        print("⚠️ CGEvent tap failed, requesting Accessibility permission if needed...")
+        let granted = PermissionManager.shared.requestAccessibilityPermission()
+        appState.hasAccessibilityPermission = granted
+        appState.isKeystrokeOverlayEnabled = false
+        if !granted {
+            PermissionManager.shared.showAccessibilityRestartAlertIfNeeded()
+        }
         print("❌ Keystroke overlay disabled — approve Accessibility permission, then restart recording")
     }
 

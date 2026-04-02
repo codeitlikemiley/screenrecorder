@@ -83,7 +83,11 @@ class AgentServer {
     }
 
     private func receiveHTTPRequest(_ connection: NWConnection) {
-        // Read up to 1MB of data
+        receiveAccumulating(connection: connection, buffer: Data())
+    }
+
+    /// Accumulate TCP data until we have the complete HTTP request (headers + body).
+    private func receiveAccumulating(connection: NWConnection, buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 1_048_576) { [weak self] data, _, isComplete, error in
             if let error = error {
                 print("🤖 Receive error: \(error)")
@@ -91,16 +95,54 @@ class AgentServer {
                 return
             }
 
-            guard let data = data, !data.isEmpty else {
+            var accumulated = buffer
+            if let data = data, !data.isEmpty {
+                accumulated.append(data)
+            }
+
+            // Try to parse what we have so far
+            guard let request = String(data: accumulated, encoding: .utf8) else {
                 if isComplete { connection.cancel() }
                 return
             }
 
-            Task { @MainActor in
-                await self?.processHTTPData(data, connection: connection)
+            // Check if we have the full headers (double CRLF)
+            guard request.contains("\r\n\r\n") else {
+                // Headers not complete yet — keep reading
+                if isComplete { connection.cancel() }
+                else { Task { @MainActor [weak self] in self?.receiveAccumulating(connection: connection, buffer: accumulated) } }
+                return
+            }
+
+            // Parse Content-Length to know if we have the full body
+            let headerPart = request.components(separatedBy: "\r\n\r\n").first ?? ""
+            let headerLines = headerPart.components(separatedBy: "\r\n")
+            var contentLength = 0
+            for line in headerLines {
+                let lower = line.lowercased()
+                if lower.hasPrefix("content-length:") {
+                    let value = line.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)
+                    contentLength = Int(value) ?? 0
+                }
+            }
+
+            // Calculate how many body bytes we've received
+            let headerEndRange = request.range(of: "\r\n\r\n")!
+            let bodyStart = request.distance(from: request.startIndex, to: headerEndRange.upperBound)
+            let receivedBodyBytes = accumulated.count - bodyStart
+
+            if receivedBodyBytes >= contentLength {
+                // We have the full message — process it
+                Task { @MainActor in
+                    await self?.processHTTPData(accumulated, connection: connection)
+                }
+            } else {
+                // Need more data
+                Task { @MainActor [weak self] in self?.receiveAccumulating(connection: connection, buffer: accumulated) }
             }
         }
     }
+
 
     private func processHTTPData(_ data: Data, connection: NWConnection) async {
         guard let request = String(data: data, encoding: .utf8) else {

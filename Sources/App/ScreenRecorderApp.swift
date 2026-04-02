@@ -132,7 +132,11 @@ struct MenuBarView: View {
                         let granted = PermissionManager.shared.requestAccessibilityPermission()
                         appState.hasAccessibilityPermission = granted
                         appState.isKeystrokeOverlayEnabled = granted
-                        if granted { coordinator.toggleKeystrokeMonitor() }
+                        if granted {
+                            coordinator.toggleKeystrokeMonitor()
+                        } else {
+                            PermissionManager.shared.showAccessibilityRestartAlertIfNeeded()
+                        }
                     } else {
                         appState.isKeystrokeOverlayEnabled = false
                         coordinator.toggleKeystrokeMonitor()

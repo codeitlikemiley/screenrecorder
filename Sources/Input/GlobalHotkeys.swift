@@ -45,7 +45,11 @@ final class GlobalHotkeyManager {
                 let granted = PermissionManager.shared.requestAccessibilityPermission()
                 state.hasAccessibilityPermission = granted
                 state.isKeystrokeOverlayEnabled = granted
-                if granted { self.onToggleKeystrokeMonitor?() }
+                if granted {
+                    self.onToggleKeystrokeMonitor?()
+                } else {
+                    PermissionManager.shared.showAccessibilityRestartAlertIfNeeded()
+                }
             } else {
                 state.isKeystrokeOverlayEnabled = false
                 self.onToggleKeystrokeMonitor?()

@@ -395,7 +395,7 @@ class AnnotationState: ObservableObject {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         guard let decoded = try? decoder.decode(AnnotationSession.self, from: data) else { return nil }
-        var session = AnnotationSession(name: decoded.name, strokes: decoded.strokes)
+        let session = AnnotationSession(name: decoded.name, strokes: decoded.strokes)
         sessions.append(session)
         saveSession(session)
         return session

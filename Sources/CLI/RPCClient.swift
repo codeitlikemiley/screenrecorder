@@ -16,7 +16,8 @@ struct RPCClient {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 30
+        request.setValue("close", forHTTPHeaderField: "Connection")
+        request.timeoutInterval = 5
 
         var body: [String: Any] = [
             "jsonrpc": "2.0",
@@ -26,7 +27,11 @@ struct RPCClient {
         if let params = params {
             body["params"] = params
         }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let bodyData = try JSONSerialization.data(withJSONObject: body)
+        request.httpBody = bodyData
+        // Must set Content-Length explicitly — otherwise URLSession uses chunked
+        // transfer encoding, which our raw NWConnection server doesn't handle.
+        request.setValue("\(bodyData.count)", forHTTPHeaderField: "Content-Length")
 
         // Synchronous request using semaphore (CLI is single-threaded)
         let semaphore = DispatchSemaphore(value: 0)
@@ -43,7 +48,14 @@ struct RPCClient {
 
         if let error = responseError {
             let nsError = error as NSError
-            if nsError.code == NSURLErrorCannotConnectToHost || nsError.code == NSURLErrorNetworkConnectionLost {
+            // These codes all mean the server isn't listening on the port
+            let noServerCodes: Set<Int> = [
+                NSURLErrorCannotConnectToHost,    // -1004
+                NSURLErrorNetworkConnectionLost,  // -1005
+                NSURLErrorTimedOut,               // -1001
+                -1,                               // connection refused (POSIX 61)
+            ]
+            if noServerCodes.contains(nsError.code) {
                 throw CLIError.appNotRunning
             }
             throw CLIError.networkError(error.localizedDescription)
@@ -81,7 +93,7 @@ enum CLIError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .appNotRunning:
-            return "Screen Recorder is not running. Launch the app first."
+            return "Screen Recorder is not running. Launch the desktop app (check your menu bar)."
         case .networkError(let msg):
             return "Network error: \(msg)"
         case .emptyResponse:
