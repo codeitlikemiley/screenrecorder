@@ -16,6 +16,19 @@ class InputSynthesizer {
         self.eventSource = CGEventSource(stateID: .hidSystemState)
     }
 
+    // MARK: - Event Posting
+
+    /// Post a CGEvent to the specified target.
+    /// - If `pid` is non-zero, delivers directly to that process without stealing focus.
+    /// - If `pid` is 0 (default), posts to the global HID event tap (affects frontmost app).
+    private func postEvent(_ event: CGEvent, toPid pid: pid_t = 0) {
+        if pid != 0 {
+            event.postToPid(pid)
+        } else {
+            event.post(tap: .cghidEventTap)
+        }
+    }
+
     // MARK: - Permission Check
 
     /// Check whether Accessibility permission has been granted.
@@ -50,23 +63,24 @@ class InputSynthesizer {
     /// - Parameters:
     ///   - point: Screen coordinates (top-left origin, points)
     ///   - clickCount: 1 = single, 2 = double, 3 = triple
-    func click(at point: CGPoint, clickCount: Int = 1) {
-        postClick(at: point, button: .left, downType: .leftMouseDown, upType: .leftMouseUp, clickCount: clickCount)
+    ///   - pid: Target process PID. If non-zero, click is sent directly to that process without stealing focus.
+    func click(at point: CGPoint, clickCount: Int = 1, targetPid: pid_t = 0) {
+        postClick(at: point, button: .left, downType: .leftMouseDown, upType: .leftMouseUp, clickCount: clickCount, targetPid: targetPid)
     }
 
     /// Perform a right-click at screen coordinates.
-    func rightClick(at point: CGPoint) {
-        postClick(at: point, button: .right, downType: .rightMouseDown, upType: .rightMouseUp, clickCount: 1)
+    func rightClick(at point: CGPoint, targetPid: pid_t = 0) {
+        postClick(at: point, button: .right, downType: .rightMouseDown, upType: .rightMouseUp, clickCount: 1, targetPid: targetPid)
     }
 
     /// Perform a double-click at screen coordinates.
-    func doubleClick(at point: CGPoint) {
-        click(at: point, clickCount: 2)
+    func doubleClick(at point: CGPoint, targetPid: pid_t = 0) {
+        click(at: point, clickCount: 2, targetPid: targetPid)
     }
 
     /// Perform a middle-click at screen coordinates.
-    func middleClick(at point: CGPoint) {
-        postClick(at: point, button: .center, downType: .otherMouseDown, upType: .otherMouseUp, clickCount: 1)
+    func middleClick(at point: CGPoint, targetPid: pid_t = 0) {
+        postClick(at: point, button: .center, downType: .otherMouseDown, upType: .otherMouseUp, clickCount: 1, targetPid: targetPid)
     }
 
     private func postClick(
@@ -74,7 +88,8 @@ class InputSynthesizer {
         button: CGMouseButton,
         downType: CGEventType,
         upType: CGEventType,
-        clickCount: Int
+        clickCount: Int,
+        targetPid: pid_t = 0
     ) {
         // For multi-click, send the sequence (down/up) with incrementing click counts
         for i in 1...clickCount {
@@ -85,8 +100,8 @@ class InputSynthesizer {
             down.setIntegerValueField(.mouseEventClickState, value: Int64(i))
             up.setIntegerValueField(.mouseEventClickState, value: Int64(i))
 
-            down.post(tap: .cghidEventTap)
-            up.post(tap: .cghidEventTap)
+            postEvent(down, toPid: targetPid)
+            postEvent(up, toPid: targetPid)
 
             // Brief pause between clicks in a multi-click sequence
             if i < clickCount {
@@ -98,7 +113,7 @@ class InputSynthesizer {
     // MARK: - Mouse: Click with Modifiers
 
     /// Click with modifier keys held (e.g., ⌘+Click, ⌥+Click).
-    func click(at point: CGPoint, modifiers: CGEventFlags, clickCount: Int = 1) {
+    func click(at point: CGPoint, modifiers: CGEventFlags, clickCount: Int = 1, targetPid: pid_t = 0) {
         for i in 1...clickCount {
             guard let down = CGEvent(mouseEventSource: eventSource, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
                   let up = CGEvent(mouseEventSource: eventSource, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)
@@ -109,8 +124,8 @@ class InputSynthesizer {
             down.setIntegerValueField(.mouseEventClickState, value: Int64(i))
             up.setIntegerValueField(.mouseEventClickState, value: Int64(i))
 
-            down.post(tap: .cghidEventTap)
-            up.post(tap: .cghidEventTap)
+            postEvent(down, toPid: targetPid)
+            postEvent(up, toPid: targetPid)
 
             if i < clickCount {
                 usleep(50_000)
@@ -157,10 +172,13 @@ class InputSynthesizer {
     ///   - at: Screen coordinates where the scroll happens
     ///   - deltaX: Horizontal scroll amount (positive = right, negative = left)
     ///   - deltaY: Vertical scroll amount (positive = up, negative = down)
-    func scroll(at point: CGPoint, deltaX: Int32 = 0, deltaY: Int32) {
-        // Move cursor to position first
-        moveMouse(to: point)
-        usleep(20_000) // 20ms settle
+    ///   - targetPid: If non-zero, deliver scroll directly to this process without stealing focus.
+    func scroll(at point: CGPoint, deltaX: Int32 = 0, deltaY: Int32, targetPid: pid_t = 0) {
+        // Only reposition the real cursor for global HID delivery.
+        if targetPid == 0 {
+            moveMouse(to: point)
+            usleep(20_000) // 20ms settle
+        }
 
         guard let event = CGEvent(
             scrollWheelEvent2Source: eventSource,
@@ -170,7 +188,7 @@ class InputSynthesizer {
             wheel2: deltaX,
             wheel3: 0
         ) else { return }
-        event.post(tap: .cghidEventTap)
+        postEvent(event, toPid: targetPid)
     }
 
     // MARK: - Keyboard: Key Press
@@ -179,23 +197,52 @@ class InputSynthesizer {
     /// - Parameters:
     ///   - keyCode: Virtual key code (see Carbon HIToolbox kVK_* constants)
     ///   - modifiers: Optional modifier flags (⌘, ⇧, ⌥, ⌃)
-    func pressKey(keyCode: UInt16, modifiers: CGEventFlags = []) {
+    ///   - targetPid: If non-zero, deliver key directly to this process without stealing focus.
+    func pressKey(keyCode: UInt16, modifiers: CGEventFlags = [], targetPid: pid_t = 0) {
         guard let down = CGEvent(keyboardEventSource: eventSource, virtualKey: keyCode, keyDown: true),
               let up = CGEvent(keyboardEventSource: eventSource, virtualKey: keyCode, keyDown: false)
         else { return }
 
         if !modifiers.isEmpty {
+            // Send proper modifier key-down events first so HID state is correct
+            sendModifierKeys(modifiers, down: true, targetPid: targetPid)
             down.flags = modifiers
+            // key-up for the main key still carries modifier flags (cmd is still held)
             up.flags = modifiers
         }
 
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
+        postEvent(down, toPid: targetPid)
+        postEvent(up, toPid: targetPid)
+
+        if !modifiers.isEmpty {
+            // Release modifier keys so HID state is fully cleared before next command
+            sendModifierKeys(modifiers, down: false, targetPid: targetPid)
+        }
+    }
+
+    /// Send physical modifier key events (down or up) for the given flags.
+    /// This ensures the HID modifier state is kept consistent and doesn't
+    /// bleed into subsequent typeText/pressKey calls.
+    private func sendModifierKeys(_ flags: CGEventFlags, down: Bool, targetPid: pid_t) {
+        // Map each modifier flag to its virtual key code
+        let pairs: [(CGEventFlags, UInt16)] = [
+            (.maskCommand,   UInt16(kVK_Command)),
+            (.maskShift,     UInt16(kVK_Shift)),
+            (.maskAlternate, UInt16(kVK_Option)),
+            (.maskControl,   UInt16(kVK_Control)),
+        ]
+        for (flag, vk) in pairs where flags.contains(flag) {
+            guard let evt = CGEvent(keyboardEventSource: eventSource, virtualKey: vk, keyDown: down)
+            else { continue }
+            // When releasing, clear all modifier flags
+            evt.flags = down ? flags : []
+            postEvent(evt, toPid: targetPid)
+        }
     }
 
     /// Execute a keyboard shortcut (e.g., ⌘+C, ⌘+⇧+4).
-    func hotkey(modifiers: CGEventFlags, keyCode: UInt16) {
-        pressKey(keyCode: keyCode, modifiers: modifiers)
+    func hotkey(modifiers: CGEventFlags, keyCode: UInt16, targetPid: pid_t = 0) {
+        pressKey(keyCode: keyCode, modifiers: modifiers, targetPid: targetPid)
     }
 
     // MARK: - Keyboard: Type Text
@@ -205,26 +252,33 @@ class InputSynthesizer {
     /// - Parameters:
     ///   - text: The text to type
     ///   - intervalMs: Delay between characters in milliseconds (default 50ms)
-    func typeText(_ text: String, intervalMs: Int = 50) {
+    ///   - targetPid: If non-zero, deliver keystrokes directly to this process without stealing focus.
+    func typeText(_ text: String, intervalMs: Int = 50, targetPid: pid_t = 0) {
         for char in text {
-            typeCharacter(char)
+            typeCharacter(char, targetPid: targetPid)
             usleep(UInt32(intervalMs) * 1000)
         }
     }
 
     /// Type a single character using CGEvent's Unicode input.
-    private func typeCharacter(_ char: Character) {
+    private func typeCharacter(_ char: Character, targetPid: pid_t = 0) {
         let utf16 = Array(String(char).utf16)
 
         guard let down = CGEvent(keyboardEventSource: eventSource, virtualKey: 0, keyDown: true),
               let up = CGEvent(keyboardEventSource: eventSource, virtualKey: 0, keyDown: false)
         else { return }
 
+        // Explicitly clear modifier flags — the eventSource (hidSystemState) may carry
+        // stale modifiers left over from a previous hotkey (e.g. cmd+l), which would
+        // cause characters like 't' to be interpreted as cmd+t (new tab) by the receiver.
+        down.flags = []
+        up.flags = []
+
         down.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
         up.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
 
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
+        postEvent(down, toPid: targetPid)
+        postEvent(up, toPid: targetPid)
     }
 
     // MARK: - Keyboard: Named Key Helpers
@@ -232,15 +286,15 @@ class InputSynthesizer {
     /// Press a named key (user-friendly names like "return", "tab", "escape", "space", etc.)
     /// Returns true if the key name was recognized.
     @discardableResult
-    func pressNamedKey(_ name: String, modifiers: CGEventFlags = []) -> Bool {
+    func pressNamedKey(_ name: String, modifiers: CGEventFlags = [], targetPid: pid_t = 0) -> Bool {
         guard let keyCode = Self.keyCodeForName(name) else { return false }
-        pressKey(keyCode: keyCode, modifiers: modifiers)
+        pressKey(keyCode: keyCode, modifiers: modifiers, targetPid: targetPid)
         return true
     }
 
     /// Parse a hotkey string like "cmd+shift+4" or "ctrl+c" into flags + keyCode.
     /// Returns nil if parsing fails.
-    func parseAndExecuteHotkey(_ hotkeyString: String) -> Bool {
+    func parseAndExecuteHotkey(_ hotkeyString: String, targetPid: pid_t = 0) -> Bool {
         let parts = hotkeyString.lowercased().split(separator: "+").map(String.init)
         guard !parts.isEmpty else { return false }
 
@@ -266,12 +320,12 @@ class InputSynthesizer {
 
         // Try named key first, then single character
         if let keyCode = Self.keyCodeForName(key) {
-            pressKey(keyCode: keyCode, modifiers: flags)
+            pressKey(keyCode: keyCode, modifiers: flags, targetPid: targetPid)
             return true
         } else if key.count == 1, let char = key.first {
             // Map single ASCII character to key code
             if let keyCode = Self.keyCodeForCharacter(char) {
-                pressKey(keyCode: keyCode, modifiers: flags)
+                pressKey(keyCode: keyCode, modifiers: flags, targetPid: targetPid)
                 return true
             }
         }
@@ -280,25 +334,6 @@ class InputSynthesizer {
     }
 
     // MARK: - App Control
-
-    /// Launch an application by name or bundle identifier.
-    /// - Returns: true if launch was initiated
-    @discardableResult
-    static func launchApp(named name: String) -> Bool {
-        // Try as bundle identifier first
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: name) {
-            NSWorkspace.shared.openApplication(at: url, configuration: .init())
-            return true
-        }
-
-        // Try as app name via path
-        if let path = NSWorkspace.shared.fullPath(forApplication: name) {
-            NSWorkspace.shared.open(URL(fileURLWithPath: path))
-            return true
-        }
-
-        return false
-    }
 
     /// Bring an application to the foreground.
     /// - Returns: true if the app was found and activated
@@ -475,5 +510,43 @@ class InputSynthesizer {
         case "`": return UInt16(kVK_ANSI_Grave)
         default:  return nil
         }
+    }
+
+    // MARK: - App Launch
+
+    /// Launch an application by name using NSWorkspace.
+    /// - Returns: true if the app was found and an open attempt was made.
+    @discardableResult
+    static func launchApp(named name: String, activate: Bool = true) -> Bool {
+        // Try to find the app in /Applications and ~/Applications
+        let searchDirs = [
+            "/Applications",
+            NSString(string: "~/Applications").expandingTildeInPath,
+        ]
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = activate
+        for dir in searchDirs {
+            let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).app")
+            if FileManager.default.fileExists(atPath: url.path) {
+                NSWorkspace.shared.openApplication(at: url,
+                    configuration: configuration) { _, _ in }
+                return true
+            }
+        }
+        // Fallback: search by display name
+        if let urls = try? FileManager.default.contentsOfDirectory(
+            at: URL(fileURLWithPath: "/Applications"),
+            includingPropertiesForKeys: nil
+        ) {
+            for url in urls {
+                if url.deletingPathExtension().lastPathComponent
+                    .localizedCaseInsensitiveContains(name) {
+                    NSWorkspace.shared.openApplication(at: url,
+                        configuration: configuration) { _, _ in }
+                    return true
+                }
+            }
+        }
+        return false
     }
 }

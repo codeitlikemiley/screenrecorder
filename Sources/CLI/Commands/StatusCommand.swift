@@ -25,6 +25,7 @@ struct Status: ParsableCommand {
             let camera = result["camera_enabled"] as? Bool ?? false
             let mic = result["mic_enabled"] as? Bool ?? false
             let duration = result["duration"] as? Double ?? 0
+            let executionMode = result["execution_mode"] as? String ?? "background_safe"
 
             print("Screen Recorder Status")
             print("──────────────────────")
@@ -32,6 +33,7 @@ struct Status: ParsableCommand {
             print("  Annotation:  \(annotating ? "✏️  Active (\(strokeCount) strokes)" : "Off")")
             print("  Camera:      \(camera ? "✅" : "❌")")
             print("  Microphone:  \(mic ? "✅" : "❌")")
+            print("  Exec mode:   \(executionMode)")
         }
     }
 }

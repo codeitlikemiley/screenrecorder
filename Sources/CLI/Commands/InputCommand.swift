@@ -8,7 +8,6 @@ struct Input: ParsableCommand {
             Synthesize mouse and keyboard input. Requires Accessibility permission.
             Use 'sr input check-access' to verify permission is granted.
 
-            Examples:
               sr input click 500 300              # click at (500, 300)
               sr input click 500 300 --count 2    # double-click
               sr input right-click 500 300        # right-click
@@ -16,6 +15,7 @@ struct Input: ParsableCommand {
               sr input scroll 500 300 --dy -100   # scroll down
               sr input move 500 300               # move cursor
               sr input type "hello world"         # type text
+              sr input type-to-field --field "Search" --text "lakers vs pistons" --app Safari
               sr input key return                 # press key
               sr input hotkey cmd+c               # keyboard shortcut
               sr input click-text "Submit"        # find text → click it
@@ -28,12 +28,18 @@ struct Input: ParsableCommand {
             Scroll.self,
             Move.self,
             TypeText.self,
+            TypeToField.self,
             Key.self,
             Hotkey.self,
             ClickText.self,
             CheckAccess.self,
         ]
     )
+
+    static func addTargetParams(app: String?, pid: Int?, to params: inout [String: Any]) {
+        if let app { params["app"] = app }
+        if let pid { params["pid"] = pid }
+    }
 
     // MARK: - Click
 
@@ -54,6 +60,12 @@ struct Input: ParsableCommand {
         @Option(name: .long, help: "Window app name for relative coordinates")
         var windowRef: String?
 
+        @Option(name: .long, help: "Deliver the click to this app without focusing it")
+        var app: String?
+
+        @Option(name: .long, help: "Deliver the click to this PID without focusing it")
+        var pid: Int?
+
         @Option(name: .long, help: "Server port")
         var port: Int = 19820
 
@@ -61,6 +73,7 @@ struct Input: ParsableCommand {
             let client = RPCClient(port: port)
             var params: [String: Any] = ["x": x, "y": y, "click_count": count]
             if let wr = windowRef { params["window_ref"] = wr }
+            Input.addTargetParams(app: app, pid: pid, to: &params)
             let result = try client.call("input.click", params: params)
             let target = result["clicked_at"] as? [String: Any] ?? [:]
             print("🖱️ Clicked at (\(Int(target["x"] as? Double ?? x)), \(Int(target["y"] as? Double ?? y)))")
@@ -84,6 +97,12 @@ struct Input: ParsableCommand {
         @Option(name: .long, help: "Window app name for relative coordinates")
         var windowRef: String?
 
+        @Option(name: .long, help: "Deliver the click to this app without focusing it")
+        var app: String?
+
+        @Option(name: .long, help: "Deliver the click to this PID without focusing it")
+        var pid: Int?
+
         @Option(name: .long, help: "Server port")
         var port: Int = 19820
 
@@ -91,6 +110,7 @@ struct Input: ParsableCommand {
             let client = RPCClient(port: port)
             var params: [String: Any] = ["x": x, "y": y]
             if let wr = windowRef { params["window_ref"] = wr }
+            Input.addTargetParams(app: app, pid: pid, to: &params)
             _ = try client.call("input.right_click", params: params)
             print("🖱️ Right-clicked at (\(Int(x)), \(Int(y)))")
         }
@@ -113,6 +133,12 @@ struct Input: ParsableCommand {
         @Option(name: .long, help: "Window app name for relative coordinates")
         var windowRef: String?
 
+        @Option(name: .long, help: "Deliver the click to this app without focusing it")
+        var app: String?
+
+        @Option(name: .long, help: "Deliver the click to this PID without focusing it")
+        var pid: Int?
+
         @Option(name: .long, help: "Server port")
         var port: Int = 19820
 
@@ -120,6 +146,7 @@ struct Input: ParsableCommand {
             let client = RPCClient(port: port)
             var params: [String: Any] = ["x": x, "y": y]
             if let wr = windowRef { params["window_ref"] = wr }
+            Input.addTargetParams(app: app, pid: pid, to: &params)
             _ = try client.call("input.double_click", params: params)
             print("🖱️ Double-clicked at (\(Int(x)), \(Int(y)))")
         }
@@ -150,6 +177,12 @@ struct Input: ParsableCommand {
         @Option(name: .long, help: "Window app name for relative coordinates")
         var windowRef: String?
 
+        @Option(name: .long, help: "Target app for background delivery. Background drag is currently unsupported.")
+        var app: String?
+
+        @Option(name: .long, help: "Target PID for background delivery. Background drag is currently unsupported.")
+        var pid: Int?
+
         @Option(name: .long, help: "Server port")
         var port: Int = 19820
 
@@ -161,6 +194,7 @@ struct Input: ParsableCommand {
                 "duration": duration,
             ]
             if let wr = windowRef { params["window_ref"] = wr }
+            Input.addTargetParams(app: app, pid: pid, to: &params)
             _ = try client.call("input.drag", params: params)
             print("🖱️ Dragged (\(Int(fromX)),\(Int(fromY))) → (\(Int(toX)),\(Int(toY)))")
         }
@@ -188,6 +222,12 @@ struct Input: ParsableCommand {
         @Option(name: .long, help: "Window app name for relative coordinates")
         var windowRef: String?
 
+        @Option(name: .long, help: "Deliver scroll to this app without focusing it")
+        var app: String?
+
+        @Option(name: .long, help: "Deliver scroll to this PID without focusing it")
+        var pid: Int?
+
         @Option(name: .long, help: "Server port")
         var port: Int = 19820
 
@@ -195,6 +235,7 @@ struct Input: ParsableCommand {
             let client = RPCClient(port: port)
             var params: [String: Any] = ["x": x, "y": y, "delta_x": dx, "delta_y": dy]
             if let wr = windowRef { params["window_ref"] = wr }
+            Input.addTargetParams(app: app, pid: pid, to: &params)
             _ = try client.call("input.scroll", params: params)
             let dir = dy < 0 ? "down" : "up"
             print("🖱️ Scrolled \(dir) at (\(Int(x)), \(Int(y)))")
@@ -243,12 +284,20 @@ struct Input: ParsableCommand {
         @Option(name: .long, help: "Delay between chars in ms (default: 50)")
         var intervalMs: Int = 50
 
+        @Option(name: .long, help: "Deliver typing to this app without focusing it")
+        var app: String?
+
+        @Option(name: .long, help: "Deliver typing to this PID without focusing it")
+        var pid: Int?
+
         @Option(name: .long, help: "Server port")
         var port: Int = 19820
 
         func run() throws {
             let client = RPCClient(port: port)
-            _ = try client.call("input.type_text", params: ["text": text, "interval_ms": intervalMs])
+            var params: [String: Any] = ["text": text, "interval_ms": intervalMs]
+            Input.addTargetParams(app: app, pid: pid, to: &params)
+            _ = try client.call("input.type_text", params: params)
             print("⌨️ Typed: \"\(text)\"")
         }
     }
@@ -266,6 +315,12 @@ struct Input: ParsableCommand {
         @Option(name: .long, help: "Modifier keys (comma-separated: cmd,shift,alt,ctrl)")
         var modifiers: String?
 
+        @Option(name: .long, help: "Deliver the key press to this app without focusing it")
+        var app: String?
+
+        @Option(name: .long, help: "Deliver the key press to this PID without focusing it")
+        var pid: Int?
+
         @Option(name: .long, help: "Server port")
         var port: Int = 19820
 
@@ -275,6 +330,7 @@ struct Input: ParsableCommand {
             if let mods = modifiers {
                 params["modifiers"] = mods.split(separator: ",").map(String.init)
             }
+            Input.addTargetParams(app: app, pid: pid, to: &params)
             _ = try client.call("input.press_key", params: params)
             let modStr = modifiers.map { "\($0)+" } ?? ""
             print("⌨️ Pressed: \(modStr)\(key)")
@@ -291,13 +347,62 @@ struct Input: ParsableCommand {
         @Argument(help: "Hotkey combo (e.g. cmd+c, cmd+shift+s)")
         var keys: String
 
+        @Option(name: .long, help: "Deliver the hotkey to this app without focusing it")
+        var app: String?
+
+        @Option(name: .long, help: "Deliver the hotkey to this PID without focusing it")
+        var pid: Int?
+
         @Option(name: .long, help: "Server port")
         var port: Int = 19820
 
         func run() throws {
             let client = RPCClient(port: port)
-            _ = try client.call("input.hotkey", params: ["keys": keys])
+            var params: [String: Any] = ["keys": keys]
+            Input.addTargetParams(app: app, pid: pid, to: &params)
+            _ = try client.call("input.hotkey", params: params)
             print("⌨️ Executed: \(keys)")
+        }
+    }
+
+    // MARK: - Type To Field
+
+    struct TypeToField: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "type-to-field",
+            abstract: "Find an input field by label/placeholder (via AX API) and type into it."
+        )
+
+        @Option(name: .long, help: "Label, placeholder, or title of the input field to target")
+        var field: String
+
+        @Option(name: .long, help: "Text to type into the field")
+        var text: String
+
+        @Option(name: .long, help: "App name to search in (uses focused app if omitted)")
+        var app: String?
+
+        @Option(name: .long, help: "Deliver the click/type events to this PID without focusing it")
+        var pid: Int?
+
+        @Option(name: .long, help: "Delay between chars in ms (default: 50)")
+        var intervalMs: Int = 50
+
+        @Option(name: .long, help: "Server port")
+        var port: Int = 19820
+
+        func run() throws {
+            let client = RPCClient(port: port)
+            var params: [String: Any] = ["field": field, "text": text, "interval_ms": intervalMs]
+            if let a = app { params["app"] = a }
+            if let pid { params["pid"] = pid }
+            let result = try client.call("input.type_to_field", params: params)
+            if result["ok"] as? Bool == true {
+                let method = result["method"] as? String ?? "?"
+                print("⌨️ Typed into '\(field)' [\(method)]: \"\(text)\"")
+            } else {
+                print("❌ \(result["error"] as? String ?? "Failed to type into field")")
+            }
         }
     }
 
@@ -315,6 +420,9 @@ struct Input: ParsableCommand {
         @Option(name: .long, help: "Window app name to search in")
         var window: String?
 
+        @Option(name: .long, help: "Deliver the click to this PID without focusing it")
+        var pid: Int?
+
         @Option(name: .long, help: "Server port")
         var port: Int = 19820
 
@@ -322,6 +430,7 @@ struct Input: ParsableCommand {
             let client = RPCClient(port: port)
             var params: [String: Any] = ["text": text]
             if let w = window { params["window"] = w }
+            if let pid { params["pid"] = pid }
             let result = try client.call("input.click_element", params: params)
             if let ok = result["ok"] as? Bool, ok {
                 let at = result["clicked_at"] as? [String: Any] ?? [:]

@@ -1,5 +1,6 @@
 import Foundation
 import Carbon.HIToolbox
+import UserNotifications
 
 /// Safety guard for AI-driven computer control actions.
 /// Provides configurable safety boundaries to prevent unintended actions.
@@ -11,6 +12,20 @@ import Carbon.HIToolbox
 /// - **Rate limiting**: Prevent runaway action loops
 /// - **Action logging**: All actions are logged for audit
 class SafetyGuard {
+    enum ExecutionMode: String {
+        case foreground
+        case backgroundSafe = "background_safe"
+        case backgroundStrict = "background_strict"
+    }
+
+    enum ActionCharacteristic: Hashable {
+        case changesFocus
+        case usesFrontmostInput
+        case movesRealCursor
+        case mutatesWindows
+        case disruptsApps
+    }
+
     /// Shared instance for app-wide safety enforcement.
     static let shared = SafetyGuard()
 
@@ -20,6 +35,10 @@ class SafetyGuard {
 
     /// When true, every action requires confirmation before execution.
     var confirmationMode: Bool = false
+
+    /// Controls how aggressively the safety gate avoids disrupting the user.
+    /// Default is background-safe so automation does not steal the active app by accident.
+    var executionMode: ExecutionMode = .backgroundSafe
 
     /// Optional callback for confirmation mode.
     /// Called with an action description; returns true if the action should proceed.
@@ -88,12 +107,21 @@ class SafetyGuard {
         let status = isEnabled ? "ENABLED ✅" : "DISABLED ⛔️"
         NSLog("[SafetyGuard] Computer control \(status)")
 
-        // Post a system notification so the user knows
-        let notification = NSUserNotification()
-        notification.title = "Screen Recorder"
-        notification.informativeText = "Computer control \(status)"
-        notification.soundName = isEnabled ? nil : NSUserNotificationDefaultSoundName
-        NSUserNotificationCenter.default.deliver(notification)
+        // Post a system notification so the user knows.
+        // First ensure we have notification permission (request is a no-op if already granted).
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        let content = UNMutableNotificationContent()
+        content.title = "Screen Recorder"
+        content.body = "Computer control \(status)"
+        if !isEnabled {
+            content.sound = .default
+        }
+        let request = UNNotificationRequest(
+            identifier: "control-lock-\(UUID().uuidString)",
+            content: content,
+            trigger: nil   // deliver immediately
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 
     // MARK: - Gate Check
@@ -103,11 +131,20 @@ class SafetyGuard {
     ///   - action: Human-readable description of the action (e.g., "click at (500, 300)")
     ///   - targetApp: Optional app name/bundle ID for allowlist checking
     /// - Returns: (allowed: Bool, reason: String?) — if not allowed, reason explains why.
-    func checkAction(_ action: String, targetApp: String? = nil) -> (allowed: Bool, reason: String?) {
+    func checkAction(
+        _ action: String,
+        targetApp: String? = nil,
+        characteristics: Set<ActionCharacteristic> = []
+    ) -> (allowed: Bool, reason: String?) {
         // Kill switch
         guard isEnabled else {
             logAction(action, allowed: false)
             return (false, "Computer control is disabled (kill switch active). Press ⌘⌥⎋ to re-enable.")
+        }
+
+        if let reason = executionModeBlockReason(for: characteristics) {
+            logAction(action, allowed: false)
+            return (false, reason)
         }
 
         // Rate limiting
@@ -151,6 +188,10 @@ class SafetyGuard {
         if let enabled = settings["enabled"] as? Bool {
             isEnabled = enabled
         }
+        if let modeRaw = settings["execution_mode"] as? String,
+           let mode = ExecutionMode(rawValue: modeRaw) {
+            executionMode = mode
+        }
         if let confirm = settings["confirmation_mode"] as? Bool {
             confirmationMode = confirm
         }
@@ -166,6 +207,7 @@ class SafetyGuard {
     func currentSettings() -> [String: Any] {
         return [
             "enabled": isEnabled,
+            "execution_mode": executionMode.rawValue,
             "confirmation_mode": confirmationMode,
             "max_actions_per_second": maxActionsPerSecond,
             "app_allowlist": Array(appAllowlist),
@@ -196,6 +238,41 @@ class SafetyGuard {
                     "allowed": $0.allowed,
                 ]
             }
+        }
+    }
+
+    private func executionModeBlockReason(for characteristics: Set<ActionCharacteristic>) -> String? {
+        switch executionMode {
+        case .foreground:
+            return nil
+        case .backgroundSafe:
+            if characteristics.contains(.changesFocus) {
+                return "Blocked by execution mode 'background_safe': focus-stealing actions are disabled. Switch to 'foreground' to allow this."
+            }
+            if characteristics.contains(.usesFrontmostInput) {
+                return "Blocked by execution mode 'background_safe': frontmost/global input is disabled. Target a specific app or PID instead."
+            }
+            if characteristics.contains(.movesRealCursor) {
+                return "Blocked by execution mode 'background_safe': real cursor movement is disabled."
+            }
+            return nil
+        case .backgroundStrict:
+            if characteristics.contains(.changesFocus) {
+                return "Blocked by execution mode 'background_strict': focus-stealing actions are disabled."
+            }
+            if characteristics.contains(.usesFrontmostInput) {
+                return "Blocked by execution mode 'background_strict': frontmost/global input is disabled. Target a specific app or PID instead."
+            }
+            if characteristics.contains(.movesRealCursor) {
+                return "Blocked by execution mode 'background_strict': real cursor movement is disabled."
+            }
+            if characteristics.contains(.mutatesWindows) {
+                return "Blocked by execution mode 'background_strict': window movement/resizing/minimizing is disabled."
+            }
+            if characteristics.contains(.disruptsApps) {
+                return "Blocked by execution mode 'background_strict': disruptive app lifecycle actions are disabled."
+            }
+            return nil
         }
     }
 }

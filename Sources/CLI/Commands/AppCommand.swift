@@ -16,14 +16,18 @@ struct App: ParsableCommand {
         @Argument(help: "App name (e.g. 'Safari') or bundle ID (e.g. 'com.apple.Safari')")
         var name: String
 
+        @Flag(name: .long, help: "Activate/focus the app after launch")
+        var activate = false
+
         @Option(name: .long, help: "Server port")
         var port: Int = 19820
 
         func run() throws {
             let client = RPCClient(port: port)
-            let result = try client.call("app.launch", params: ["name": name])
+            let result = try client.call("app.launch", params: ["name": name, "activate": activate])
             if result["ok"] as? Bool == true {
-                print("🚀 Launched: \(name)")
+                let mode = activate ? "foreground" : "background"
+                print("🚀 Launched (\(mode)): \(name)")
             } else {
                 print("❌ \(result["error"] as? String ?? "Could not launch \(name)")")
             }
