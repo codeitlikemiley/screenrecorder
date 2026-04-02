@@ -111,6 +111,8 @@ class AgentRouter {
             return try inputHotkey(params: params)
         case "input.click_element":
             return try await inputClickElement(params: params)
+        case "input.type_to_field":
+            return try await inputTypeToField(params: params)
 
         // App control
         case "app.launch":
@@ -119,6 +121,32 @@ class AgentRouter {
             return try activateApp(params: params)
         case "app.list":
             return listApps()
+
+        // Browser automation
+        case "browser.status":
+            return try await browserStatus(params: params)
+        case "browser.launch":
+            return try await browserLaunch(params: params)
+        case "browser.launch_and_open":
+            return try await browserLaunchAndOpen(params: params)
+        case "browser.tabs":
+            return try await browserTabs(params: params)
+        case "browser.open_tab":
+            return try await browserOpenTab(params: params)
+        case "browser.activate_tab":
+            return try await browserActivateTab(params: params)
+        case "browser.navigate":
+            return try await browserNavigate(params: params)
+        case "browser.eval":
+            return try await browserEval(params: params)
+        case "browser.click":
+            return try await browserClick(params: params)
+        case "browser.type":
+            return try await browserType(params: params)
+        case "browser.press_key":
+            return try await browserPressKey(params: params)
+        case "browser.screenshot":
+            return try await browserScreenshot(params: params)
 
         // Shell command execution
         case "shell.exec":
@@ -151,14 +179,52 @@ class AgentRouter {
             let count = params?["count"] as? Int ?? 20
             return ["actions": SafetyGuard.shared.recentActions(count: count)]
 
+        // Agent Control Lock — blocks user input while agent runs
+        case "input.lock_for_agent":
+            return lockForAgent(params: params)
+        case "input.unlock":
+            return unlockForUser()
+        case "input.lock_status":
+            return AgentControlLock.shared.status()
+
+        // App lifecycle extras
+        case "app.quit":
+            return try quitApp(params: params)
+        case "app.relaunch":
+            return try relaunchApp(params: params)
+        case "app.hide":
+            return try hideApp(params: params)
+
+        // Window manipulation
+        case "window.move":
+            return try moveWindow(params: params)
+        case "window.resize":
+            return try resizeWindow(params: params)
+        case "window.minimize":
+            return try minimizeWindow(params: params)
+        case "window.restore":
+            return try restoreWindow(params: params)
+
+        // Sleep / delay
+        case "sleep":
+            return try sleepMs(params: params)
+
         default:
             throw AgentError.methodNotFound(method)
         }
     }
 
     /// Gate check — returns an error result if the action is blocked, nil if allowed.
-    private func safetyGate(action: String, targetApp: String? = nil) -> [String: Any]? {
-        let (allowed, reason) = SafetyGuard.shared.checkAction(action, targetApp: targetApp)
+    private func safetyGate(
+        action: String,
+        targetApp: String? = nil,
+        characteristics: Set<SafetyGuard.ActionCharacteristic> = []
+    ) -> [String: Any]? {
+        let (allowed, reason) = SafetyGuard.shared.checkAction(
+            action,
+            targetApp: targetApp,
+            characteristics: characteristics
+        )
         if !allowed {
             return ["ok": false, "error": reason ?? "Action blocked by safety guard"]
         }
@@ -166,6 +232,13 @@ class AgentRouter {
     }
 
     private func configureSafety(params: [String: Any]?) -> [String: Any] {
+        if let modeRaw = params?["execution_mode"] as? String,
+           SafetyGuard.ExecutionMode(rawValue: modeRaw) == nil {
+            return [
+                "ok": false,
+                "error": "Invalid execution_mode '\(modeRaw)'. Valid: foreground, background_safe, background_strict",
+            ]
+        }
         if let settings = params {
             SafetyGuard.shared.configure(settings)
         }
@@ -187,6 +260,7 @@ class AgentRouter {
             "line_width": state.annotationState.lineWidth,
             "camera_enabled": state.isCameraEnabled,
             "mic_enabled": state.isMicrophoneEnabled,
+            "execution_mode": SafetyGuard.shared.currentSettings()["execution_mode"] as? String ?? "background_safe",
             "duration": state.recordingDuration,
         ]
     }
@@ -819,6 +893,11 @@ class AgentRouter {
         let windowName = params?["window"] as? String
         let windowId = params?["window_id"] as? Int
 
+        // Size control params
+        let scaleFactor = params?["scale"] as? Double ?? 1.0        // 0.0–1.0 downsample
+        let jpegQuality = params?["quality"] as? Double             // nil = PNG, 0–1 = JPEG
+        let maxBytes    = params?["max_bytes"] as? Int ?? 4_900_000 // 4.9 MB (just under 5 MB API limit)
+
         // Determine output file
         let outputURL: URL
         if let path = outputPath {
@@ -868,10 +947,11 @@ class AgentRouter {
                 throw AgentError.captureError("No window found for app: \(windowName)")
             }
         } else {
-            // Full screen
+            // Full screen — capture the display where the app resides
+            // or the key window display (NSScreen.main).
             guard let screen = NSScreen.main else {
                 restoreAfterCapture(coordinator: coordinator, wasVisible: wasAnnotationVisible, clean: clean)
-                throw AgentError.captureError("No main screen")
+                throw AgentError.captureError("No primary screen")
             }
             captureRect = screen.frame
         }
@@ -888,23 +968,84 @@ class AgentRouter {
 
         restoreAfterCapture(coordinator: coordinator, wasVisible: wasAnnotationVisible, clean: clean)
 
-        // Convert to PNG
-        let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
-        guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
-            throw AgentError.captureError("PNG encoding failed")
+        // --- Size Control ---
+        // 1. Optional downscale
+        var finalImage: CGImage = cgImage
+        if scaleFactor > 0 && scaleFactor < 1.0 {
+            let newW = Int(Double(cgImage.width) * scaleFactor)
+            let newH = Int(Double(cgImage.height) * scaleFactor)
+            if newW > 0 && newH > 0,
+               let ctx = CGContext(
+                    data: nil, width: newW, height: newH,
+                    bitsPerComponent: 8, bytesPerRow: 0,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+               ) {
+                ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: newW, height: newH))
+                finalImage = ctx.makeImage() ?? cgImage
+            }
         }
 
-        try pngData.write(to: outputURL)
+        // 2. Encode — JPEG if quality specified, else PNG
+        let bitmapRep = NSBitmapImageRep(cgImage: finalImage)
+
+        func encode(quality q: Double?) -> Data? {
+            if let q = q {
+                return bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: q])
+            }
+            return bitmapRep.representation(using: .png, properties: [:])
+        }
+
+        var imageData: Data
+        if var q = jpegQuality {
+            // User specified JPEG — honour their quality but still cap at maxBytes
+            guard var data = encode(quality: q) else {
+                throw AgentError.captureError("JPEG encoding failed")
+            }
+            // Auto-reduce quality until under maxBytes
+            while data.count > maxBytes && q > 0.05 {
+                q = max(q - 0.1, 0.05)
+                data = encode(quality: q) ?? data
+            }
+            imageData = data
+        } else {
+            // No quality specified — try PNG first
+            guard let pngData = encode(quality: nil) else {
+                throw AgentError.captureError("PNG encoding failed")
+            }
+            if pngData.count <= maxBytes {
+                imageData = pngData
+            } else {
+                // PNG too large — auto convert to JPEG and reduce until it fits
+                var q = 0.8
+                var jpegData = encode(quality: q) ?? pngData
+                while jpegData.count > maxBytes && q > 0.05 {
+                    q = max(q - 0.1, 0.05)
+                    jpegData = encode(quality: q) ?? jpegData
+                }
+                imageData = jpegData
+            }
+        }
+
+        // 3. Write to disk (use .jpg extension if JPEG)
+        var writeURL = outputURL
+        if jpegQuality != nil || imageData.count != (encode(quality: nil)?.count ?? 0) {
+            if writeURL.pathExtension.lowercased() == "png" {
+                writeURL = writeURL.deletingPathExtension().appendingPathExtension("jpg")
+            }
+        }
+        try imageData.write(to: writeURL)
 
         var result: [String: Any] = [
             "ok": true,
-            "file": outputURL.path,
-            "width": cgImage.width,
-            "height": cgImage.height,
+            "file": writeURL.path,
+            "width": finalImage.width,
+            "height": finalImage.height,
+            "size_bytes": imageData.count,
         ]
 
         if returnBase64 {
-            result["base64"] = pngData.base64EncodedString()
+            result["base64"] = imageData.base64EncodedString()
         }
 
         return result
@@ -920,6 +1061,36 @@ class AgentRouter {
             let owner = info[kCGWindowOwnerName as String] as? String ?? ""
             if owner.localizedCaseInsensitiveContains(appName) {
                 return info[kCGWindowNumber as String] as? Int
+            }
+        }
+        return nil
+    }
+
+    private func findWindowOwnerPid(windowId: Int) -> pid_t? {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+        for info in windowList {
+            let currentId = info[kCGWindowNumber as String] as? Int ?? 0
+            if currentId == windowId {
+                let pid = info[kCGWindowOwnerPID as String] as? Int32 ?? 0
+                return pid == 0 ? nil : pid
+            }
+        }
+        return nil
+    }
+
+    private func findWindowOwnerName(windowId: Int) -> String? {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+        for info in windowList {
+            let currentId = info[kCGWindowNumber as String] as? Int ?? 0
+            if currentId == windowId {
+                let owner = info[kCGWindowOwnerName as String] as? String
+                return owner?.isEmpty == false ? owner : nil
             }
         }
         return nil
@@ -996,6 +1167,71 @@ class AgentRouter {
         return CGPoint(x: x + Double(offset.x), y: y + Double(offset.y))
     }
 
+    private func resolveTargetPid(params: [String: Any]?) -> pid_t {
+        if let pid = params?["pid"] as? Int32, pid != 0 {
+            return pid
+        }
+        if let pid = params?["pid"] as? Int, pid != 0 {
+            return pid_t(pid)
+        }
+        if let windowId = params?["window_id"] as? Int,
+           let pid = findWindowOwnerPid(windowId: windowId) {
+            return pid
+        }
+        if let windowRefId = params?["window_ref_id"] as? Int,
+           let pid = findWindowOwnerPid(windowId: windowRefId) {
+            return pid
+        }
+        if let windowName = params?["window"] as? String,
+           let windowId = findWindowId(appName: windowName),
+           let pid = findWindowOwnerPid(windowId: windowId) {
+            return pid
+        }
+        if let windowRef = params?["window_ref"] as? String,
+           let windowId = findWindowId(appName: windowRef),
+           let pid = findWindowOwnerPid(windowId: windowId) {
+            return pid
+        }
+        let appName = (params?["app"] as? String) ?? (params?["target_app"] as? String)
+        if let appName,
+           let app = NSWorkspace.shared.runningApplications.first(where: {
+               $0.localizedName?.localizedCaseInsensitiveContains(appName) ?? false
+           }) {
+            return app.processIdentifier
+        }
+        return 0
+    }
+
+    private func resolveTargetAppName(params: [String: Any]?) -> String? {
+        if let app = params?["app"] as? String, !app.isEmpty {
+            return app
+        }
+        if let targetApp = params?["target_app"] as? String, !targetApp.isEmpty {
+            return targetApp
+        }
+        if let window = params?["window"] as? String, !window.isEmpty {
+            return window
+        }
+        if let windowRef = params?["window_ref"] as? String, !windowRef.isEmpty {
+            return windowRef
+        }
+        if let windowId = params?["window_id"] as? Int,
+           let owner = findWindowOwnerName(windowId: windowId) {
+            return owner
+        }
+        if let windowRefId = params?["window_ref_id"] as? Int,
+           let owner = findWindowOwnerName(windowId: windowRefId) {
+            return owner
+        }
+        if let pid = params?["pid"] as? Int {
+            return NSWorkspace.shared.runningApplications.first(where: { $0.processIdentifier == pid_t(pid) })?.localizedName
+        }
+        if let pid = params?["pid"] as? Int32 {
+            return NSWorkspace.shared.runningApplications.first(where: { $0.processIdentifier == pid })?.localizedName
+        }
+        return nil
+    }
+
     private func inputClick(params: [String: Any]?) throws -> [String: Any] {
         guard InputSynthesizer.checkAccessibilityPermission() else {
             return ["ok": false, "error": "Accessibility permission not granted. Open System Settings → Privacy & Security → Accessibility and add Screen Recorder."]
@@ -1006,9 +1242,15 @@ class AgentRouter {
         let offset = resolveWindowOffset(params: params)
         let point = resolvePoint(x: x, y: y, offset: offset)
         let clickCount = params?["click_count"] as? Int ?? 1
-        if let blocked = safetyGate(action: "click at (\(Int(point.x)), \(Int(point.y)))") { return blocked }
-        inputSynthesizer.click(at: point, clickCount: clickCount)
-        return ["ok": true, "clicked_at": ["x": point.x, "y": point.y], "click_count": clickCount]
+        let targetPid = resolveTargetPid(params: params)
+        let characteristics: Set<SafetyGuard.ActionCharacteristic> = targetPid == 0 ? [.usesFrontmostInput, .movesRealCursor] : []
+        if let blocked = safetyGate(
+            action: "click at (\(Int(point.x)), \(Int(point.y)))",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: characteristics
+        ) { return blocked }
+        inputSynthesizer.click(at: point, clickCount: clickCount, targetPid: targetPid)
+        return ["ok": true, "clicked_at": ["x": point.x, "y": point.y], "click_count": clickCount, "target_pid": Int(targetPid)]
     }
 
     private func inputRightClick(params: [String: Any]?) throws -> [String: Any] {
@@ -1020,9 +1262,15 @@ class AgentRouter {
         }
         let offset = resolveWindowOffset(params: params)
         let point = resolvePoint(x: x, y: y, offset: offset)
-        if let blocked = safetyGate(action: "right-click at (\(Int(point.x)), \(Int(point.y)))") { return blocked }
-        inputSynthesizer.rightClick(at: point)
-        return ["ok": true, "right_clicked_at": ["x": point.x, "y": point.y]]
+        let targetPid = resolveTargetPid(params: params)
+        let characteristics: Set<SafetyGuard.ActionCharacteristic> = targetPid == 0 ? [.usesFrontmostInput, .movesRealCursor] : []
+        if let blocked = safetyGate(
+            action: "right-click at (\(Int(point.x)), \(Int(point.y)))",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: characteristics
+        ) { return blocked }
+        inputSynthesizer.rightClick(at: point, targetPid: targetPid)
+        return ["ok": true, "right_clicked_at": ["x": point.x, "y": point.y], "target_pid": Int(targetPid)]
     }
 
     private func inputDoubleClick(params: [String: Any]?) throws -> [String: Any] {
@@ -1034,9 +1282,15 @@ class AgentRouter {
         }
         let offset = resolveWindowOffset(params: params)
         let point = resolvePoint(x: x, y: y, offset: offset)
-        if let blocked = safetyGate(action: "double-click at (\(Int(point.x)), \(Int(point.y)))") { return blocked }
-        inputSynthesizer.doubleClick(at: point)
-        return ["ok": true, "double_clicked_at": ["x": point.x, "y": point.y]]
+        let targetPid = resolveTargetPid(params: params)
+        let characteristics: Set<SafetyGuard.ActionCharacteristic> = targetPid == 0 ? [.usesFrontmostInput, .movesRealCursor] : []
+        if let blocked = safetyGate(
+            action: "double-click at (\(Int(point.x)), \(Int(point.y)))",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: characteristics
+        ) { return blocked }
+        inputSynthesizer.doubleClick(at: point, targetPid: targetPid)
+        return ["ok": true, "double_clicked_at": ["x": point.x, "y": point.y], "target_pid": Int(targetPid)]
     }
 
     private func inputMiddleClick(params: [String: Any]?) throws -> [String: Any] {
@@ -1048,9 +1302,15 @@ class AgentRouter {
         }
         let offset = resolveWindowOffset(params: params)
         let point = resolvePoint(x: x, y: y, offset: offset)
-        if let blocked = safetyGate(action: "middle-click at (\(Int(point.x)), \(Int(point.y)))") { return blocked }
-        inputSynthesizer.middleClick(at: point)
-        return ["ok": true, "middle_clicked_at": ["x": point.x, "y": point.y]]
+        let targetPid = resolveTargetPid(params: params)
+        let characteristics: Set<SafetyGuard.ActionCharacteristic> = targetPid == 0 ? [.usesFrontmostInput, .movesRealCursor] : []
+        if let blocked = safetyGate(
+            action: "middle-click at (\(Int(point.x)), \(Int(point.y)))",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: characteristics
+        ) { return blocked }
+        inputSynthesizer.middleClick(at: point, targetPid: targetPid)
+        return ["ok": true, "middle_clicked_at": ["x": point.x, "y": point.y], "target_pid": Int(targetPid)]
     }
 
     private func inputDrag(params: [String: Any]?) throws -> [String: Any] {
@@ -1062,12 +1322,19 @@ class AgentRouter {
         else {
             throw AgentError.invalidParams("Missing 'from_x', 'from_y', 'to_x', 'to_y' coordinates")
         }
+        if resolveTargetPid(params: params) != 0 {
+            return ["ok": false, "error": "Background drag is not supported yet. Use focused drag or an app-specific AX action instead."]
+        }
         let offset = resolveWindowOffset(params: params)
         let from = resolvePoint(x: fromX, y: fromY, offset: offset)
         let to = resolvePoint(x: toX, y: toY, offset: offset)
         let duration = params?["duration"] as? Double ?? 0.5
         let steps = params?["steps"] as? Int ?? 20
-        if let blocked = safetyGate(action: "drag (\(Int(from.x)),\(Int(from.y))) → (\(Int(to.x)),\(Int(to.y)))") { return blocked }
+        if let blocked = safetyGate(
+            action: "drag (\(Int(from.x)),\(Int(from.y))) → (\(Int(to.x)),\(Int(to.y)))",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: [.usesFrontmostInput, .movesRealCursor]
+        ) { return blocked }
         inputSynthesizer.drag(from: from, to: to, duration: duration, steps: steps)
         return ["ok": true, "dragged_from": ["x": from.x, "y": from.y], "dragged_to": ["x": to.x, "y": to.y]]
     }
@@ -1083,12 +1350,18 @@ class AgentRouter {
         let point = resolvePoint(x: x, y: y, offset: offset)
         let deltaX = Int32(params?["delta_x"] as? Double ?? 0)
         let deltaY = Int32(params?["delta_y"] as? Double ?? 0)
+        let targetPid = resolveTargetPid(params: params)
         guard deltaX != 0 || deltaY != 0 else {
             throw AgentError.invalidParams("At least one of 'delta_x' or 'delta_y' must be non-zero")
         }
-        if let blocked = safetyGate(action: "scroll at (\(Int(point.x)), \(Int(point.y))) dy=\(deltaY)") { return blocked }
-        inputSynthesizer.scroll(at: point, deltaX: deltaX, deltaY: deltaY)
-        return ["ok": true, "scrolled_at": ["x": point.x, "y": point.y], "delta_x": deltaX, "delta_y": deltaY]
+        let characteristics: Set<SafetyGuard.ActionCharacteristic> = targetPid == 0 ? [.usesFrontmostInput, .movesRealCursor] : []
+        if let blocked = safetyGate(
+            action: "scroll at (\(Int(point.x)), \(Int(point.y))) dy=\(deltaY)",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: characteristics
+        ) { return blocked }
+        inputSynthesizer.scroll(at: point, deltaX: deltaX, deltaY: deltaY, targetPid: targetPid)
+        return ["ok": true, "scrolled_at": ["x": point.x, "y": point.y], "delta_x": deltaX, "delta_y": deltaY, "target_pid": Int(targetPid)]
     }
 
     private func inputMoveMouse(params: [String: Any]?) throws -> [String: Any] {
@@ -1100,7 +1373,11 @@ class AgentRouter {
         }
         let offset = resolveWindowOffset(params: params)
         let point = resolvePoint(x: x, y: y, offset: offset)
-        if let blocked = safetyGate(action: "move mouse to (\(Int(point.x)), \(Int(point.y)))") { return blocked }
+        if let blocked = safetyGate(
+            action: "move mouse to (\(Int(point.x)), \(Int(point.y)))",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: [.movesRealCursor]
+        ) { return blocked }
         inputSynthesizer.moveMouse(to: point)
         return ["ok": true, "moved_to": ["x": point.x, "y": point.y]]
     }
@@ -1113,9 +1390,15 @@ class AgentRouter {
             throw AgentError.invalidParams("Missing 'text' parameter")
         }
         let intervalMs = params?["interval_ms"] as? Int ?? 50
-        if let blocked = safetyGate(action: "type text: \"\(text.prefix(50))\"") { return blocked }
-        inputSynthesizer.typeText(text, intervalMs: intervalMs)
-        return ["ok": true, "typed": text, "char_count": text.count]
+        let targetPid = resolveTargetPid(params: params)
+        let characteristics: Set<SafetyGuard.ActionCharacteristic> = targetPid == 0 ? [.usesFrontmostInput] : []
+        if let blocked = safetyGate(
+            action: "type text: \"\(text.prefix(50))\"",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: characteristics
+        ) { return blocked }
+        inputSynthesizer.typeText(text, intervalMs: intervalMs, targetPid: targetPid)
+        return ["ok": true, "typed": text, "char_count": text.count, "target_pid": Int(targetPid)]
     }
 
     private func inputPressKey(params: [String: Any]?) throws -> [String: Any] {
@@ -1140,11 +1423,17 @@ class AgentRouter {
             }
         }
 
-        if let blocked = safetyGate(action: "press key: \(key)") { return blocked }
-        guard inputSynthesizer.pressNamedKey(key, modifiers: flags) else {
+        let targetPid = resolveTargetPid(params: params)
+        let characteristics: Set<SafetyGuard.ActionCharacteristic> = targetPid == 0 ? [.usesFrontmostInput] : []
+        if let blocked = safetyGate(
+            action: "press key: \(key)",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: characteristics
+        ) { return blocked }
+        guard inputSynthesizer.pressNamedKey(key, modifiers: flags, targetPid: targetPid) else {
             throw AgentError.invalidParams("Unknown key name: '\(key)'. Valid: return, tab, space, delete, escape, up, down, left, right, home, end, pageup, pagedown, f1-f12")
         }
-        return ["ok": true, "pressed": key]
+        return ["ok": true, "pressed": key, "target_pid": Int(targetPid)]
     }
 
     private func inputHotkey(params: [String: Any]?) throws -> [String: Any] {
@@ -1154,11 +1443,17 @@ class AgentRouter {
         guard let hotkeyString = params?["keys"] as? String else {
             throw AgentError.invalidParams("Missing 'keys' parameter (e.g. 'cmd+c', 'ctrl+shift+4')")
         }
-        if let blocked = safetyGate(action: "hotkey: \(hotkeyString)") { return blocked }
-        guard inputSynthesizer.parseAndExecuteHotkey(hotkeyString) else {
+        let targetPid = resolveTargetPid(params: params)
+        let characteristics: Set<SafetyGuard.ActionCharacteristic> = targetPid == 0 ? [.usesFrontmostInput] : []
+        if let blocked = safetyGate(
+            action: "hotkey: \(hotkeyString)",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: characteristics
+        ) { return blocked }
+        guard inputSynthesizer.parseAndExecuteHotkey(hotkeyString, targetPid: targetPid) else {
             throw AgentError.invalidParams("Could not parse hotkey: '\(hotkeyString)'. Format: 'cmd+c', 'ctrl+shift+a'")
         }
-        return ["ok": true, "executed": hotkeyString]
+        return ["ok": true, "executed": hotkeyString, "target_pid": Int(targetPid)]
     }
 
     private func inputClickElement(params: [String: Any]?) async throws -> [String: Any] {
@@ -1189,14 +1484,42 @@ class AgentRouter {
         }
 
         // Get center coordinates of the matched element
-        guard let center = match["center"] as? [String: Any],
-              let cx = center["x"] as? Double,
-              let cy = center["y"] as? Double else {
-            return ["ok": false, "error": "Element found but has no center coordinates"]
+        var cx: Double
+        var cy: Double
+        if let center = match["center"] as? [String: Any],
+           let ocx = center["x"] as? Double,
+           let ocy = center["y"] as? Double {
+            cx = ocx
+            cy = ocy
+        } else {
+            // OCR found text but couldn't get coordinates (common for browser chrome UI).
+            // Fall back to AX API: search the target app's accessibility tree.
+            let appName = (params?["window"] as? String) ?? ""
+            let axRoot: AXUIElement?
+            if !appName.isEmpty {
+                axRoot = AccessibilityBridge.appElement(named: appName)
+            } else {
+                axRoot = AccessibilityBridge.focusedApplication()
+            }
+            if let root = axRoot,
+               let el = AccessibilityBridge.findElement(in: root, withTitle: text),
+               let center = AccessibilityBridge.center(of: el) {
+                cx = Double(center.x)
+                cy = Double(center.y)
+            } else {
+                return ["ok": false, "error": "Element '\(text)' found via OCR but has no center coordinates, and AX fallback also failed. Try clicking by coordinate using 'sr detect' to find position."]
+            }
         }
 
         let clickCount = params?["click_count"] as? Int ?? 1
-        inputSynthesizer.click(at: CGPoint(x: cx, y: cy), clickCount: clickCount)
+        let targetPid = resolveTargetPid(params: params)
+        let characteristics: Set<SafetyGuard.ActionCharacteristic> = targetPid == 0 ? [.usesFrontmostInput, .movesRealCursor] : []
+        if let blocked = safetyGate(
+            action: "click element '\(text)'",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: characteristics
+        ) { return blocked }
+        inputSynthesizer.click(at: CGPoint(x: cx, y: cy), clickCount: clickCount, targetPid: targetPid)
 
         return [
             "ok": true,
@@ -1204,7 +1527,89 @@ class AgentRouter {
             "clicked_at": ["x": cx, "y": cy],
             "click_count": clickCount,
             "confidence": match["confidence"] ?? 0,
+            "target_pid": Int(targetPid),
         ]
+    }
+
+    // MARK: - input.type_to_field
+
+    /// Atomically focus an AX text field by label/placeholder and type into it.
+    private func inputTypeToField(params: [String: Any]?) async throws -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let fieldHint = params?["field"] as? String else {
+            throw AgentError.invalidParams("Missing 'field' parameter — label or placeholder of the text field")
+        }
+        guard let text = params?["text"] as? String else {
+            throw AgentError.invalidParams("Missing 'text' parameter")
+        }
+        let intervalMs = params?["interval_ms"] as? Int ?? 50
+        let targetPid = resolveTargetPid(params: params)
+        let characteristics: Set<SafetyGuard.ActionCharacteristic> = targetPid == 0 ? [.usesFrontmostInput, .movesRealCursor] : []
+
+        // Resolve target app
+        let axRoot: AXUIElement?
+        if let appName = params?["app"] as? String, !appName.isEmpty {
+            axRoot = AccessibilityBridge.appElement(named: appName)
+        } else {
+            axRoot = AccessibilityBridge.focusedApplication()
+        }
+        guard let root = axRoot else {
+            return ["ok": false, "error": "Could not resolve target application"]
+        }
+
+        // Search for a text field with matching label/placeholder/title
+        let textFields = AccessibilityBridge.findElements(in: root, role: "AXTextField", maxResults: 30)
+            + AccessibilityBridge.findElements(in: root, role: "AXTextArea", maxResults: 10)
+            + AccessibilityBridge.findElements(in: root, role: "AXComboBox", maxResults: 10)
+        let hint = fieldHint.lowercased()
+        let match = textFields.first(where: { el in
+            let title = AccessibilityBridge.stringAttribute(kAXTitleAttribute as String, of: el)?.lowercased() ?? ""
+            let desc  = AccessibilityBridge.stringAttribute(kAXDescriptionAttribute as String, of: el)?.lowercased() ?? ""
+            let ph    = AccessibilityBridge.stringAttribute(kAXPlaceholderValueAttribute as String, of: el)?.lowercased() ?? ""
+            let label = AccessibilityBridge.stringAttribute(kAXLabelValueAttribute as String, of: el)?.lowercased() ?? ""
+            return title.contains(hint) || desc.contains(hint) || ph.contains(hint) || label.contains(hint)
+        })
+
+        if let el = match {
+            if let blocked = safetyGate(
+                action: "type to field '\(fieldHint)': \"\(text.prefix(50))\"",
+                targetApp: resolveTargetAppName(params: params),
+                characteristics: characteristics
+            ) { return blocked }
+            // Focus via AX first
+            AccessibilityBridge.setFocus(on: el)
+            // Give focus a moment to settle
+            try await Task.sleep(nanoseconds: 150_000_000)
+            // Also click its center to ensure cursor is in field
+            if let center = AccessibilityBridge.center(of: el) {
+                inputSynthesizer.click(at: center, targetPid: targetPid)
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            inputSynthesizer.typeText(text, intervalMs: intervalMs, targetPid: targetPid)
+            return ["ok": true, "typed": text, "field": fieldHint, "method": "ax", "target_pid": Int(targetPid)]
+        }
+
+        // Fallback: OCR detect + click + type
+        let detectParams: [String: Any] = ["min_confidence": 0.5]
+        let detected = try await detectElements(params: detectParams)
+        if let elements = detected["elements"] as? [[String: Any]],
+           let ocrMatch = elements.first(where: { ($0["text"] as? String ?? "").lowercased().contains(hint) }),
+           let center = ocrMatch["center"] as? [String: Any],
+           let cx = center["x"] as? Double, let cy = center["y"] as? Double {
+            if let blocked = safetyGate(
+                action: "type to field '\(fieldHint)' (OCR): \"\(text.prefix(50))\"",
+                targetApp: resolveTargetAppName(params: params),
+                characteristics: characteristics
+            ) { return blocked }
+            inputSynthesizer.click(at: CGPoint(x: cx, y: cy), targetPid: targetPid)
+            try await Task.sleep(nanoseconds: 150_000_000)
+            inputSynthesizer.typeText(text, intervalMs: intervalMs, targetPid: targetPid)
+            return ["ok": true, "typed": text, "field": fieldHint, "method": "ocr_fallback", "target_pid": Int(targetPid)]
+        }
+
+        return ["ok": false, "error": "Field '\(fieldHint)' not found via AX or OCR. Use 'sr input click <x> <y>' with coordinates from 'sr detect --json'."]
     }
 
     // MARK: - App Control
@@ -1213,25 +1618,106 @@ class AgentRouter {
         guard let name = params?["name"] as? String else {
             throw AgentError.invalidParams("Missing 'name' parameter (app name or bundle identifier)")
         }
-        if InputSynthesizer.launchApp(named: name) {
-            return ["ok": true, "launched": name]
+        let activate = params?["activate"] as? Bool ?? false
+        if activate,
+           let blocked = safetyGate(
+               action: "launch and activate app '\(name)'",
+               targetApp: name,
+               characteristics: [.changesFocus]
+           ) {
+            return blocked
         }
-        return ["ok": false, "error": "Could not launch app: \(name)"]
+        guard InputSynthesizer.launchApp(named: name, activate: activate) else {
+            return ["ok": false, "error": "Could not launch app: \(name)"]
+        }
+        let focused = activate ? waitForFocus(appName: name, timeoutMs: 3000) : false
+        return ["ok": true, "launched": name, "focused": focused, "activated": activate]
     }
 
     private func activateApp(params: [String: Any]?) throws -> [String: Any] {
         guard let name = params?["name"] as? String else {
             throw AgentError.invalidParams("Missing 'name' parameter")
         }
-        if InputSynthesizer.activateApp(named: name) {
-            return ["ok": true, "activated": name]
+        if let blocked = safetyGate(
+            action: "activate app '\(name)'",
+            targetApp: name,
+            characteristics: [.changesFocus]
+        ) { return blocked }
+        guard InputSynthesizer.activateApp(named: name) else {
+            return ["ok": false, "error": "Could not activate app: \(name). Is it running?"]
         }
-        return ["ok": false, "error": "Could not activate app: \(name). Is it running?"]
+        // Wait for app to become frontmost (up to 2s)
+        let focused = waitForFocus(appName: name, timeoutMs: 2000)
+        return ["ok": true, "activated": name, "focused": focused]
+    }
+
+    /// Poll until the named app is frontmost or timeout expires.
+    /// Returns true if focus was confirmed, false if timed out.
+    private func waitForFocus(appName: String, timeoutMs: Int) -> Bool {
+        let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000.0)
+        while Date() < deadline {
+            let frontName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+            if frontName.localizedCaseInsensitiveContains(appName) {
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return false
     }
 
     private func listApps() -> [String: Any] {
         let apps = InputSynthesizer.listRunningApps()
         return ["apps": apps, "count": apps.count]
+    }
+
+    // MARK: - Browser Automation
+
+    private func browserStatus(params: [String: Any]?) async throws -> [String: Any] {
+        try await BrowserAutomationManager.shared.status(params: params)
+    }
+
+    private func browserLaunch(params: [String: Any]?) async throws -> [String: Any] {
+        try await BrowserAutomationManager.shared.launch(params: params)
+    }
+
+    private func browserLaunchAndOpen(params: [String: Any]?) async throws -> [String: Any] {
+        try await BrowserAutomationManager.shared.launchAndOpen(params: params)
+    }
+
+    private func browserTabs(params: [String: Any]?) async throws -> [String: Any] {
+        try await BrowserAutomationManager.shared.listTabs(params: params)
+    }
+
+    private func browserOpenTab(params: [String: Any]?) async throws -> [String: Any] {
+        try await BrowserAutomationManager.shared.openTab(params: params)
+    }
+
+    private func browserActivateTab(params: [String: Any]?) async throws -> [String: Any] {
+        try await BrowserAutomationManager.shared.activateTab(params: params)
+    }
+
+    private func browserNavigate(params: [String: Any]?) async throws -> [String: Any] {
+        try await BrowserAutomationManager.shared.navigate(params: params)
+    }
+
+    private func browserEval(params: [String: Any]?) async throws -> [String: Any] {
+        try await BrowserAutomationManager.shared.evaluate(params: params)
+    }
+
+    private func browserClick(params: [String: Any]?) async throws -> [String: Any] {
+        try await BrowserAutomationManager.shared.click(params: params)
+    }
+
+    private func browserType(params: [String: Any]?) async throws -> [String: Any] {
+        try await BrowserAutomationManager.shared.type(params: params)
+    }
+
+    private func browserPressKey(params: [String: Any]?) async throws -> [String: Any] {
+        try await BrowserAutomationManager.shared.pressKey(params: params)
+    }
+
+    private func browserScreenshot(params: [String: Any]?) async throws -> [String: Any] {
+        try await BrowserAutomationManager.shared.screenshot(params: params)
     }
 
     // MARK: - Shell Command Execution
@@ -1274,6 +1760,19 @@ class AgentRouter {
         } else {
             return AccessibilityBridge.focusedApplication()
         }
+    }
+
+    private func hasExplicitAXTarget(params: [String: Any]?) -> Bool {
+        if let app = params?["app"] as? String, !app.isEmpty {
+            return true
+        }
+        if let bundleId = params?["bundle_id"] as? String, !bundleId.isEmpty {
+            return true
+        }
+        if params?["pid"] != nil {
+            return true
+        }
+        return false
     }
 
     private func axGetTree(params: [String: Any]?) -> [String: Any] {
@@ -1320,12 +1819,19 @@ class AgentRouter {
         guard InputSynthesizer.checkAccessibilityPermission() else {
             return ["ok": false, "error": "Accessibility permission not granted"]
         }
+        let explicitTarget = hasExplicitAXTarget(params: params)
+        let characteristics: Set<SafetyGuard.ActionCharacteristic> = explicitTarget ? [] : [.usesFrontmostInput]
         guard let root = resolveAXRoot(params: params) else {
             return ["ok": false, "error": "Could not find the target application"]
         }
         guard let title = params?["title"] as? String else {
             return ["ok": false, "error": "Missing 'title' parameter — the element to press"]
         }
+        if let blocked = safetyGate(
+            action: "AX press '\(title)'",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: characteristics
+        ) { return blocked }
 
         guard let element = AccessibilityBridge.findElement(in: root, withTitle: title) else {
             return ["ok": false, "error": "Element '\(title)' not found"]
@@ -1340,6 +1846,8 @@ class AgentRouter {
         guard InputSynthesizer.checkAccessibilityPermission() else {
             return ["ok": false, "error": "Accessibility permission not granted"]
         }
+        let explicitTarget = hasExplicitAXTarget(params: params)
+        let characteristics: Set<SafetyGuard.ActionCharacteristic> = explicitTarget ? [] : [.usesFrontmostInput]
         guard let root = resolveAXRoot(params: params) else {
             return ["ok": false, "error": "Could not find the target application"]
         }
@@ -1349,6 +1857,11 @@ class AgentRouter {
         guard let value = params?["value"] as? String else {
             return ["ok": false, "error": "Missing 'value' parameter"]
         }
+        if let blocked = safetyGate(
+            action: "AX set value '\(title)'",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: characteristics
+        ) { return blocked }
 
         guard let element = AccessibilityBridge.findElement(in: root, withTitle: title) else {
             return ["ok": false, "error": "Element '\(title)' not found"]
@@ -1451,6 +1964,188 @@ class AgentRouter {
                 textContent: a.text
             )
         }
+    }
+
+    // MARK: - Agent Control Lock
+
+    private func lockForAgent(params: [String: Any]?) -> [String: Any] {
+        let unlockKey = params?["unlock_key"] as? String
+        AgentControlLock.shared.lock(unlockKey: unlockKey)
+        return AgentControlLock.shared.status()
+    }
+
+    private func unlockForUser() -> [String: Any] {
+        AgentControlLock.shared.unlock()
+        return AgentControlLock.shared.status()
+    }
+
+    // MARK: - App Lifecycle Extras
+
+    private func quitApp(params: [String: Any]?) throws -> [String: Any] {
+        guard let name = params?["name"] as? String else {
+            throw AgentError.invalidParams("Missing 'name' parameter")
+        }
+        if let blocked = safetyGate(
+            action: "quit app '\(name)'",
+            targetApp: name,
+            characteristics: [.disruptsApps]
+        ) { return blocked }
+        let apps = NSWorkspace.shared.runningApplications.filter {
+            $0.localizedName?.localizedCaseInsensitiveContains(name) ?? false ||
+            ($0.bundleIdentifier?.localizedCaseInsensitiveContains(name) ?? false)
+        }
+        guard !apps.isEmpty else {
+            return ["ok": false, "error": "No running app found: \(name)"]
+        }
+        let force = params?["force"] as? Bool ?? false
+        for app in apps {
+            if force {
+                app.forceTerminate()
+            } else {
+                app.terminate()
+            }
+        }
+        return ["ok": true, "terminated": apps.compactMap { $0.localizedName }]
+    }
+
+    private func relaunchApp(params: [String: Any]?) throws -> [String: Any] {
+        guard let name = params?["name"] as? String else {
+            throw AgentError.invalidParams("Missing 'name' parameter")
+        }
+        if let blocked = safetyGate(
+            action: "relaunch app '\(name)'",
+            targetApp: name,
+            characteristics: [.disruptsApps]
+        ) { return blocked }
+        // Quit then relaunch
+        _ = try? quitApp(params: params)
+        Thread.sleep(forTimeInterval: 1.0)
+        let launched = InputSynthesizer.launchApp(named: name)
+        return ["ok": launched, "action": "relaunch", "app": name]
+    }
+
+    private func hideApp(params: [String: Any]?) throws -> [String: Any] {
+        guard let name = params?["name"] as? String else {
+            throw AgentError.invalidParams("Missing 'name' parameter")
+        }
+        if let blocked = safetyGate(
+            action: "hide app '\(name)'",
+            targetApp: name,
+            characteristics: [.disruptsApps]
+        ) { return blocked }
+        let apps = NSWorkspace.shared.runningApplications.filter {
+            $0.localizedName?.localizedCaseInsensitiveContains(name) ?? false
+        }
+        guard let app = apps.first else {
+            return ["ok": false, "error": "No running app found: \(name)"]
+        }
+        app.hide()
+        return ["ok": true, "hidden": app.localizedName ?? name]
+    }
+
+    // MARK: - Window Manipulation (via AXUIElement)
+
+    private func moveWindow(params: [String: Any]?) throws -> [String: Any] {
+        guard let x = params?["x"] as? Double, let y = params?["y"] as? Double else {
+            throw AgentError.invalidParams("Missing 'x' and 'y' parameters")
+        }
+        if let blocked = safetyGate(
+            action: "move window to (\(Int(x)), \(Int(y)))",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: [.mutatesWindows]
+        ) { return blocked }
+        let axApp = try targetAXApp(params: params)
+        guard let window = firstWindow(of: axApp) else {
+            return ["ok": false, "error": "No window found"]
+        }
+        var point = CGPoint(x: x, y: y)
+        let value = AXValueCreate(.cgPoint, &point)!
+        AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
+        return ["ok": true, "moved_to": ["x": x, "y": y]]
+    }
+
+    private func resizeWindow(params: [String: Any]?) throws -> [String: Any] {
+        guard let w = params?["width"] as? Double, let h = params?["height"] as? Double else {
+            throw AgentError.invalidParams("Missing 'width' and 'height' parameters")
+        }
+        if let blocked = safetyGate(
+            action: "resize window to \(Int(w))×\(Int(h))",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: [.mutatesWindows]
+        ) { return blocked }
+        let axApp = try targetAXApp(params: params)
+        guard let window = firstWindow(of: axApp) else {
+            return ["ok": false, "error": "No window found"]
+        }
+        var size = CGSize(width: w, height: h)
+        let value = AXValueCreate(.cgSize, &size)!
+        AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value)
+        return ["ok": true, "resized_to": ["width": w, "height": h]]
+    }
+
+    private func minimizeWindow(params: [String: Any]?) throws -> [String: Any] {
+        if let blocked = safetyGate(
+            action: "minimize window",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: [.mutatesWindows]
+        ) { return blocked }
+        let axApp = try targetAXApp(params: params)
+        guard let window = firstWindow(of: axApp) else {
+            return ["ok": false, "error": "No window found"]
+        }
+        AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, true as CFTypeRef)
+        return ["ok": true]
+    }
+
+    private func restoreWindow(params: [String: Any]?) throws -> [String: Any] {
+        if let blocked = safetyGate(
+            action: "restore window",
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: [.mutatesWindows]
+        ) { return blocked }
+        let axApp = try targetAXApp(params: params)
+        guard let window = firstWindow(of: axApp) else {
+            return ["ok": false, "error": "No window found"]
+        }
+        AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, false as CFTypeRef)
+        return ["ok": true]
+    }
+
+    /// Resolve an AXUIElement for a running app from params containing "app" or "pid".
+    private func targetAXApp(params: [String: Any]?) throws -> AXUIElement {
+        if let pid = params?["pid"] as? Int32 {
+            return AXUIElementCreateApplication(pid)
+        }
+        if let name = params?["app"] as? String {
+            guard let app = NSWorkspace.shared.runningApplications.first(where: {
+                $0.localizedName?.localizedCaseInsensitiveContains(name) ?? false
+            }) else {
+                throw AgentError.invalidParams("No running app: \(name)")
+            }
+            return AXUIElementCreateApplication(app.processIdentifier)
+        }
+        // Default: frontmost app
+        guard let app = NSWorkspace.shared.frontmostApplication else {
+            throw AgentError.invalidParams("No frontmost app")
+        }
+        return AXUIElementCreateApplication(app.processIdentifier)
+    }
+
+    private func firstWindow(of axApp: AXUIElement) -> AXUIElement? {
+        var windowsRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let windows = windowsRef as? [AXUIElement],
+              let first = windows.first
+        else { return nil }
+        return first
+    }
+
+    // MARK: - Sleep
+
+    private func sleepMs(params: [String: Any]?) throws -> [String: Any] {
+        let ms = params?["ms"] as? Int ?? params?["duration"] as? Int ?? 500
+        usleep(UInt32(ms) * 1000)
+        return ["ok": true, "slept_ms": ms]
     }
 }
 

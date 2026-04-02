@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Model Context Protocol server using stdio transport (JSON-RPC 2.0).
@@ -67,7 +68,7 @@ final class MCPServer {
 
         // License check
         guard licenseManager.isActivated else {
-            writeToolError(id: id, message: "No license activated. Run: sr activate YOUR-KEY")
+            writeToolError(id: id, message: "No license activated. Run: sr-mcp activate YOUR-KEY")
             return
         }
 
@@ -231,6 +232,8 @@ final class MCPServer {
                 if let cc = arguments["click_count"] { rpcParams["click_count"] = cc }
                 if let wr = arguments["window_ref"] { rpcParams["window_ref"] = wr }
                 if let wri = arguments["window_ref_id"] { rpcParams["window_ref_id"] = wri }
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                if let pid = arguments["pid"] { rpcParams["pid"] = pid }
                 result = try await callRPC(method: "input.click", params: rpcParams)
 
             case "screen_recorder_right_click":
@@ -239,6 +242,8 @@ final class MCPServer {
                 if let y = arguments["y"] { rpcParams["y"] = y }
                 if let wr = arguments["window_ref"] { rpcParams["window_ref"] = wr }
                 if let wri = arguments["window_ref_id"] { rpcParams["window_ref_id"] = wri }
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                if let pid = arguments["pid"] { rpcParams["pid"] = pid }
                 result = try await callRPC(method: "input.right_click", params: rpcParams)
 
             case "screen_recorder_double_click":
@@ -247,6 +252,8 @@ final class MCPServer {
                 if let y = arguments["y"] { rpcParams["y"] = y }
                 if let wr = arguments["window_ref"] { rpcParams["window_ref"] = wr }
                 if let wri = arguments["window_ref_id"] { rpcParams["window_ref_id"] = wri }
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                if let pid = arguments["pid"] { rpcParams["pid"] = pid }
                 result = try await callRPC(method: "input.double_click", params: rpcParams)
 
             case "screen_recorder_drag":
@@ -258,6 +265,8 @@ final class MCPServer {
                 if let d = arguments["duration"] { rpcParams["duration"] = d }
                 if let wr = arguments["window_ref"] { rpcParams["window_ref"] = wr }
                 if let wri = arguments["window_ref_id"] { rpcParams["window_ref_id"] = wri }
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                if let pid = arguments["pid"] { rpcParams["pid"] = pid }
                 result = try await callRPC(method: "input.drag", params: rpcParams)
 
             case "screen_recorder_scroll":
@@ -268,6 +277,8 @@ final class MCPServer {
                 if let dy = arguments["delta_y"] { rpcParams["delta_y"] = dy }
                 if let wr = arguments["window_ref"] { rpcParams["window_ref"] = wr }
                 if let wri = arguments["window_ref_id"] { rpcParams["window_ref_id"] = wri }
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                if let pid = arguments["pid"] { rpcParams["pid"] = pid }
                 result = try await callRPC(method: "input.scroll", params: rpcParams)
 
             case "screen_recorder_move_mouse":
@@ -282,17 +293,23 @@ final class MCPServer {
                 var rpcParams: [String: Any] = [:]
                 if let text = arguments["text"] { rpcParams["text"] = text }
                 if let interval = arguments["interval_ms"] { rpcParams["interval_ms"] = interval }
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                if let pid = arguments["pid"] { rpcParams["pid"] = pid }
                 result = try await callRPC(method: "input.type_text", params: rpcParams)
 
             case "screen_recorder_press_key":
                 var rpcParams: [String: Any] = [:]
                 if let key = arguments["key"] { rpcParams["key"] = key }
                 if let mods = arguments["modifiers"] { rpcParams["modifiers"] = mods }
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                if let pid = arguments["pid"] { rpcParams["pid"] = pid }
                 result = try await callRPC(method: "input.press_key", params: rpcParams)
 
             case "screen_recorder_hotkey":
                 var rpcParams: [String: Any] = [:]
                 if let keys = arguments["keys"] { rpcParams["keys"] = keys }
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                if let pid = arguments["pid"] { rpcParams["pid"] = pid }
                 result = try await callRPC(method: "input.hotkey", params: rpcParams)
 
             case "screen_recorder_click_element":
@@ -301,11 +318,13 @@ final class MCPServer {
                 if let window = arguments["window"] { rpcParams["window"] = window }
                 if let windowId = arguments["window_id"] { rpcParams["window_id"] = windowId }
                 if let cc = arguments["click_count"] { rpcParams["click_count"] = cc }
+                if let pid = arguments["pid"] { rpcParams["pid"] = pid }
                 result = try await callRPC(method: "input.click_element", params: rpcParams)
 
             case "screen_recorder_launch_app":
                 var rpcParams: [String: Any] = [:]
                 if let name = arguments["name"] { rpcParams["name"] = name }
+                if let activate = arguments["activate"] { rpcParams["activate"] = activate }
                 result = try await callRPC(method: "app.launch", params: rpcParams)
 
             case "screen_recorder_activate_app":
@@ -315,6 +334,119 @@ final class MCPServer {
 
             case "screen_recorder_list_apps":
                 result = try await callRPC(method: "app.list")
+
+            // --- Browser Automation ---
+
+            case "screen_recorder_browser_status":
+                var rpcParams: [String: Any] = [:]
+                if let backend = arguments["backend"] { rpcParams["backend"] = backend }
+                if let port = arguments["port"] { rpcParams["port"] = port }
+                result = try await callRPC(method: "browser.status", params: rpcParams)
+
+            case "screen_recorder_browser_launch":
+                var rpcParams: [String: Any] = [:]
+                if let backend = arguments["backend"] { rpcParams["backend"] = backend }
+                if let port = arguments["port"] { rpcParams["port"] = port }
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                if let url = arguments["url"] { rpcParams["url"] = url }
+                if let activate = arguments["activate"] { rpcParams["activate"] = activate }
+                if let isolated = arguments["isolated"] { rpcParams["isolated"] = isolated }
+                result = try await callRPC(method: "browser.launch", params: rpcParams)
+
+            case "screen_recorder_browser_launch_and_open":
+                var rpcParams: [String: Any] = [:]
+                if let backend = arguments["backend"] { rpcParams["backend"] = backend }
+                if let port = arguments["port"] { rpcParams["port"] = port }
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                if let url = arguments["url"] { rpcParams["url"] = url }
+                if let activate = arguments["activate"] { rpcParams["activate"] = activate }
+                if let isolated = arguments["isolated"] { rpcParams["isolated"] = isolated }
+                if let newTab = arguments["new_tab"] { rpcParams["new_tab"] = newTab }
+                result = try await callRPC(method: "browser.launch_and_open", params: rpcParams)
+
+            case "screen_recorder_browser_tabs":
+                var rpcParams: [String: Any] = [:]
+                if let backend = arguments["backend"] { rpcParams["backend"] = backend }
+                if let port = arguments["port"] { rpcParams["port"] = port }
+                result = try await callRPC(method: "browser.tabs", params: rpcParams)
+
+            case "screen_recorder_browser_open_tab":
+                var rpcParams: [String: Any] = [:]
+                if let backend = arguments["backend"] { rpcParams["backend"] = backend }
+                if let port = arguments["port"] { rpcParams["port"] = port }
+                if let url = arguments["url"] { rpcParams["url"] = url }
+                result = try await callRPC(method: "browser.open_tab", params: rpcParams)
+
+            case "screen_recorder_browser_activate_tab":
+                var rpcParams: [String: Any] = [:]
+                if let backend = arguments["backend"] { rpcParams["backend"] = backend }
+                if let port = arguments["port"] { rpcParams["port"] = port }
+                if let tabID = arguments["tab_id"] { rpcParams["tab_id"] = tabID }
+                if let titleContains = arguments["title_contains"] { rpcParams["title_contains"] = titleContains }
+                if let urlContains = arguments["url_contains"] { rpcParams["url_contains"] = urlContains }
+                result = try await callRPC(method: "browser.activate_tab", params: rpcParams)
+
+            case "screen_recorder_browser_navigate":
+                var rpcParams: [String: Any] = [:]
+                if let backend = arguments["backend"] { rpcParams["backend"] = backend }
+                if let port = arguments["port"] { rpcParams["port"] = port }
+                if let url = arguments["url"] { rpcParams["url"] = url }
+                if let tabID = arguments["tab_id"] { rpcParams["tab_id"] = tabID }
+                if let titleContains = arguments["title_contains"] { rpcParams["title_contains"] = titleContains }
+                if let urlContains = arguments["url_contains"] { rpcParams["url_contains"] = urlContains }
+                result = try await callRPC(method: "browser.navigate", params: rpcParams)
+
+            case "screen_recorder_browser_eval":
+                var rpcParams: [String: Any] = [:]
+                if let backend = arguments["backend"] { rpcParams["backend"] = backend }
+                if let port = arguments["port"] { rpcParams["port"] = port }
+                if let expression = arguments["expression"] { rpcParams["expression"] = expression }
+                if let tabID = arguments["tab_id"] { rpcParams["tab_id"] = tabID }
+                if let titleContains = arguments["title_contains"] { rpcParams["title_contains"] = titleContains }
+                if let urlContains = arguments["url_contains"] { rpcParams["url_contains"] = urlContains }
+                result = try await callRPC(method: "browser.eval", params: rpcParams)
+
+            case "screen_recorder_browser_click":
+                var rpcParams: [String: Any] = [:]
+                if let backend = arguments["backend"] { rpcParams["backend"] = backend }
+                if let port = arguments["port"] { rpcParams["port"] = port }
+                if let selector = arguments["selector"] { rpcParams["selector"] = selector }
+                if let tabID = arguments["tab_id"] { rpcParams["tab_id"] = tabID }
+                if let titleContains = arguments["title_contains"] { rpcParams["title_contains"] = titleContains }
+                if let urlContains = arguments["url_contains"] { rpcParams["url_contains"] = urlContains }
+                result = try await callRPC(method: "browser.click", params: rpcParams)
+
+            case "screen_recorder_browser_type":
+                var rpcParams: [String: Any] = [:]
+                if let backend = arguments["backend"] { rpcParams["backend"] = backend }
+                if let port = arguments["port"] { rpcParams["port"] = port }
+                if let selector = arguments["selector"] { rpcParams["selector"] = selector }
+                if let text = arguments["text"] { rpcParams["text"] = text }
+                if let tabID = arguments["tab_id"] { rpcParams["tab_id"] = tabID }
+                if let titleContains = arguments["title_contains"] { rpcParams["title_contains"] = titleContains }
+                if let urlContains = arguments["url_contains"] { rpcParams["url_contains"] = urlContains }
+                result = try await callRPC(method: "browser.type", params: rpcParams)
+
+            case "screen_recorder_browser_press_key":
+                var rpcParams: [String: Any] = [:]
+                if let backend = arguments["backend"] { rpcParams["backend"] = backend }
+                if let port = arguments["port"] { rpcParams["port"] = port }
+                if let key = arguments["key"] { rpcParams["key"] = key }
+                if let tabID = arguments["tab_id"] { rpcParams["tab_id"] = tabID }
+                if let titleContains = arguments["title_contains"] { rpcParams["title_contains"] = titleContains }
+                if let urlContains = arguments["url_contains"] { rpcParams["url_contains"] = urlContains }
+                result = try await callRPC(method: "browser.press_key", params: rpcParams)
+
+            case "screen_recorder_browser_screenshot":
+                var rpcParams: [String: Any] = [:]
+                if let backend = arguments["backend"] { rpcParams["backend"] = backend }
+                if let port = arguments["port"] { rpcParams["port"] = port }
+                if let output = arguments["output_path"] { rpcParams["output"] = output }
+                if let base64 = arguments["base64"] { rpcParams["base64"] = base64 }
+                if let tabID = arguments["tab_id"] { rpcParams["tab_id"] = tabID }
+                if let titleContains = arguments["title_contains"] { rpcParams["title_contains"] = titleContains }
+                if let urlContains = arguments["url_contains"] { rpcParams["url_contains"] = urlContains }
+                result = try await callRPC(method: "browser.screenshot", params: rpcParams)
 
             case "screen_recorder_run_command":
                 var rpcParams: [String: Any] = [:]
@@ -388,6 +520,70 @@ final class MCPServer {
                 if let count = arguments["count"] { rpcParams["count"] = count }
                 result = try await callRPC(method: "safety.log", params: rpcParams)
 
+            // --- Agent Control Lock ---
+
+            case "screen_recorder_lock_controls":
+                var rpcParams: [String: Any] = [:]
+                if let key = arguments["unlock_key"] { rpcParams["unlock_key"] = key }
+                result = try await callRPC(method: "input.lock_for_agent", params: rpcParams.isEmpty ? nil : rpcParams)
+
+            case "screen_recorder_unlock_controls":
+                result = try await callRPC(method: "input.unlock")
+
+            case "screen_recorder_control_status":
+                result = try await callRPC(method: "input.lock_status")
+
+            // --- App Lifecycle ---
+
+            case "screen_recorder_quit_app":
+                var rpcParams: [String: Any] = [:]
+                if let name = arguments["name"] { rpcParams["name"] = name }
+                if let force = arguments["force"] { rpcParams["force"] = force }
+                result = try await callRPC(method: "app.quit", params: rpcParams)
+
+            case "screen_recorder_relaunch_app":
+                var rpcParams: [String: Any] = [:]
+                if let name = arguments["name"] { rpcParams["name"] = name }
+                result = try await callRPC(method: "app.relaunch", params: rpcParams)
+
+            case "screen_recorder_hide_app":
+                var rpcParams: [String: Any] = [:]
+                if let name = arguments["name"] { rpcParams["name"] = name }
+                result = try await callRPC(method: "app.hide", params: rpcParams)
+
+            // --- Window Manipulation ---
+
+            case "screen_recorder_window_move":
+                var rpcParams: [String: Any] = [:]
+                if let x = arguments["x"] { rpcParams["x"] = x }
+                if let y = arguments["y"] { rpcParams["y"] = y }
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                result = try await callRPC(method: "window.move", params: rpcParams)
+
+            case "screen_recorder_window_resize":
+                var rpcParams: [String: Any] = [:]
+                if let w = arguments["width"] { rpcParams["width"] = w }
+                if let h = arguments["height"] { rpcParams["height"] = h }
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                result = try await callRPC(method: "window.resize", params: rpcParams)
+
+            case "screen_recorder_window_minimize":
+                var rpcParams: [String: Any] = [:]
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                result = try await callRPC(method: "window.minimize", params: rpcParams)
+
+            case "screen_recorder_window_restore":
+                var rpcParams: [String: Any] = [:]
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                result = try await callRPC(method: "window.restore", params: rpcParams)
+
+            // --- Sleep / Delay ---
+
+            case "screen_recorder_sleep":
+                var rpcParams: [String: Any] = [:]
+                if let ms = arguments["ms"] { rpcParams["ms"] = ms }
+                result = try await callRPC(method: "sleep", params: rpcParams)
+
             default:
                 writeToolError(id: id, message: "Unknown tool: \(toolName)")
                 return
@@ -406,12 +602,38 @@ final class MCPServer {
 
     // MARK: - RPC Client
 
-    /// Call the local Screen Recorder app via JSON-RPC
+    /// Call the local Screen Recorder app via JSON-RPC.
+    /// If the connection fails, automatically tries to launch the app and retries once.
     private func callRPC(method: String, params: [String: Any]? = nil) async throws -> Any {
+        do {
+            return try await performRPC(method: method, params: params)
+        } catch {
+            // Connection refused — app is probably not running. Try to launch it then retry.
+            let errDesc = error.localizedDescription.lowercased()
+            guard errDesc.contains("connection refused") || errDesc.contains("could not connect") || errDesc.contains("network connection was lost") else {
+                throw error
+            }
+            fputs("[sr-mcp] App not running on port \(rpcPort) — attempting auto-launch...\n", stderr)
+            await autoLaunchApp()
+            // Wait up to 5s for the app to start accepting connections
+            for _ in 0..<10 {
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+                if let result = try? await performRPC(method: method, params: params) {
+                    return result
+                }
+            }
+            // Final attempt — throw if still failing
+            return try await performRPC(method: method, params: params)
+        }
+    }
+
+    /// Low-level RPC call — no retry logic.
+    private func performRPC(method: String, params: [String: Any]? = nil) async throws -> Any {
         let url = URL(string: "http://localhost:\(rpcPort)")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 5
 
         var body: [String: Any] = [
             "jsonrpc": "2.0",
@@ -730,13 +952,15 @@ final class MCPServer {
 
             toolDef(
                 name: "screen_recorder_click",
-                description: "Click at screen coordinates. Supports window-relative coordinates via window_ref.",
+                description: "Click at screen coordinates. Supports window-relative coordinates and optional background delivery to a target app/PID without stealing focus.",
                 properties: [
                     "x": ["type": "number", "description": "X coordinate (screen points)"],
                     "y": ["type": "number", "description": "Y coordinate (screen points)"],
                     "click_count": ["type": "integer", "description": "Number of clicks (1=single, 2=double, 3=triple). Default: 1"],
                     "window_ref": ["type": "string", "description": "App name — coordinates become relative to this window"],
                     "window_ref_id": ["type": "integer", "description": "Window ID — coordinates become relative to this window"],
+                    "app": ["type": "string", "description": "Deliver to this app's PID without focusing it"],
+                    "pid": ["type": "integer", "description": "Deliver directly to this PID without focusing it"],
                 ],
                 required: ["x", "y"]
             ),
@@ -748,6 +972,8 @@ final class MCPServer {
                     "y": ["type": "number", "description": "Y coordinate"],
                     "window_ref": ["type": "string", "description": "App name for relative coordinates"],
                     "window_ref_id": ["type": "integer", "description": "Window ID for relative coordinates"],
+                    "app": ["type": "string", "description": "Deliver to this app's PID without focusing it"],
+                    "pid": ["type": "integer", "description": "Deliver directly to this PID without focusing it"],
                 ],
                 required: ["x", "y"]
             ),
@@ -759,6 +985,8 @@ final class MCPServer {
                     "y": ["type": "number", "description": "Y coordinate"],
                     "window_ref": ["type": "string", "description": "App name for relative coordinates"],
                     "window_ref_id": ["type": "integer", "description": "Window ID for relative coordinates"],
+                    "app": ["type": "string", "description": "Deliver to this app's PID without focusing it"],
+                    "pid": ["type": "integer", "description": "Deliver directly to this PID without focusing it"],
                 ],
                 required: ["x", "y"]
             ),
@@ -778,7 +1006,7 @@ final class MCPServer {
             ),
             toolDef(
                 name: "screen_recorder_scroll",
-                description: "Scroll at a screen position. Positive delta_y = scroll up, negative = scroll down.",
+                description: "Scroll at a screen position. Positive delta_y = scroll up, negative = scroll down. Can deliver to a background app/PID without moving focus.",
                 properties: [
                     "x": ["type": "number", "description": "X coordinate where scroll happens"],
                     "y": ["type": "number", "description": "Y coordinate where scroll happens"],
@@ -786,6 +1014,8 @@ final class MCPServer {
                     "delta_y": ["type": "number", "description": "Vertical scroll amount (positive=up, negative=down)"],
                     "window_ref": ["type": "string", "description": "App name for relative coordinates"],
                     "window_ref_id": ["type": "integer", "description": "Window ID for relative coordinates"],
+                    "app": ["type": "string", "description": "Deliver to this app's PID without focusing it"],
+                    "pid": ["type": "integer", "description": "Deliver directly to this PID without focusing it"],
                 ],
                 required: ["x", "y"]
             ),
@@ -802,30 +1032,36 @@ final class MCPServer {
             ),
             toolDef(
                 name: "screen_recorder_type_text",
-                description: "Type a string of text character by character. Works in any focused text field.",
+                description: "Type a string of text character by character. Works in the focused text field by default, or can deliver to a specific app/PID without focusing it.",
                 properties: [
                     "text": ["type": "string", "description": "The text to type"],
                     "interval_ms": ["type": "integer", "description": "Delay between characters in ms (default: 50)"],
+                    "app": ["type": "string", "description": "Deliver to this app's PID without focusing it"],
+                    "pid": ["type": "integer", "description": "Deliver directly to this PID without focusing it"],
                 ],
                 required: ["text"]
             ),
             toolDef(
                 name: "screen_recorder_press_key",
-                description: "Press a named key with optional modifier keys. Keys: return, tab, space, delete, escape, up, down, left, right, home, end, pageup, pagedown, f1-f12.",
+                description: "Press a named key with optional modifier keys. Keys: return, tab, space, delete, escape, up, down, left, right, home, end, pageup, pagedown, f1-f12. Can target a background app/PID.",
                 properties: [
                     "key": ["type": "string", "description": "Key name (e.g. 'return', 'tab', 'escape', 'up', 'f5')"],
                     "modifiers": [
                         "type": "array",
                         "description": "Modifier keys to hold: 'cmd', 'shift', 'alt'/'opt', 'ctrl'",
                     ],
+                    "app": ["type": "string", "description": "Deliver to this app's PID without focusing it"],
+                    "pid": ["type": "integer", "description": "Deliver directly to this PID without focusing it"],
                 ],
                 required: ["key"]
             ),
             toolDef(
                 name: "screen_recorder_hotkey",
-                description: "Execute a keyboard shortcut. Format: modifier+key (e.g. 'cmd+c', 'cmd+shift+4', 'ctrl+a').",
+                description: "Execute a keyboard shortcut. Format: modifier+key (e.g. 'cmd+c', 'cmd+shift+4', 'ctrl+a'). Can target a background app/PID.",
                 properties: [
                     "keys": ["type": "string", "description": "Hotkey string (e.g. 'cmd+c', 'cmd+shift+s', 'ctrl+alt+delete')"],
+                    "app": ["type": "string", "description": "Deliver to this app's PID without focusing it"],
+                    "pid": ["type": "integer", "description": "Deliver directly to this PID without focusing it"],
                 ],
                 required: ["keys"]
             ),
@@ -837,14 +1073,16 @@ final class MCPServer {
                     "window": ["type": "string", "description": "Restrict search to a specific window by app name"],
                     "window_id": ["type": "integer", "description": "Restrict search to a specific window by ID"],
                     "click_count": ["type": "integer", "description": "Number of clicks (default: 1)"],
+                    "pid": ["type": "integer", "description": "Deliver the click directly to this PID without focusing it"],
                 ],
                 required: ["text"]
             ),
             toolDef(
                 name: "screen_recorder_launch_app",
-                description: "Launch a macOS application by name or bundle identifier.",
+                description: "Launch a macOS application by name or bundle identifier. Defaults to background launch unless activate=true. If the target is Safari or a Chromium browser and the task is webpage interaction, prefer browser tools instead of app.launch plus desktop input.",
                 properties: [
                     "name": ["type": "string", "description": "App name (e.g. 'Safari', 'Terminal') or bundle ID (e.g. 'com.apple.Safari')"],
+                    "activate": ["type": "boolean", "description": "If true, activate/focus the app after launch. Default: false."],
                 ],
                 required: ["name"]
             ),
@@ -860,6 +1098,148 @@ final class MCPServer {
                 name: "screen_recorder_list_apps",
                 description: "List all running macOS applications with name, bundle ID, PID, and active status.",
                 properties: [:]
+            ),
+            toolDef(
+                name: "screen_recorder_browser_status",
+                description: "Check whether a browser automation endpoint is reachable. If the task is webpage interaction inside Safari or a Chromium browser, prefer browser tools over app.launch plus input.*.",
+                properties: [
+                    "backend": ["type": "string", "description": "Browser backend: 'chromium' or 'safari'."],
+                    "port": ["type": "integer", "description": "Automation port (default: 9222)"],
+                ]
+            ),
+            toolDef(
+                name: "screen_recorder_browser_launch",
+                description: "Launch a browser for automation. Use this when the user explicitly wants Safari/Chrome/etc. For webpage work, browser tools are preferred over desktop OCR/mouse input.",
+                properties: [
+                    "backend": ["type": "string", "description": "Browser backend: 'chromium' or 'safari'."],
+                    "app": ["type": "string", "description": "Browser app name, e.g. 'Google Chrome', 'Chromium', 'Brave Browser', or 'Microsoft Edge'."],
+                    "port": ["type": "integer", "description": "Automation port to use (default: 9222)"],
+                    "url": ["type": "string", "description": "Optional URL to open on launch"],
+                    "activate": ["type": "boolean", "description": "If true, bring the browser to the foreground. Default: false."],
+                    "isolated": ["type": "boolean", "description": "If true, use a dedicated automation profile directory. Chromium only. Default: true."],
+                ]
+            ),
+            toolDef(
+                name: "screen_recorder_browser_launch_and_open",
+                description: "Best first step for webpage tasks. Ensures the chosen browser automation backend is available, then opens or navigates to the target URL without requiring desktop clicking or address-bar typing.",
+                properties: [
+                    "backend": ["type": "string", "description": "Browser backend: 'chromium' or 'safari'."],
+                    "app": ["type": "string", "description": "Browser app name, e.g. 'Google Chrome' or 'Safari'."],
+                    "port": ["type": "integer", "description": "Automation port to use (default: 9222)"],
+                    "url": ["type": "string", "description": "URL to open or navigate to."],
+                    "activate": ["type": "boolean", "description": "If true, bring the browser to the foreground. Default: false."],
+                    "isolated": ["type": "boolean", "description": "If true, use a dedicated automation profile directory when launching. Chromium only. Default: true."],
+                    "new_tab": ["type": "boolean", "description": "If the browser is already running, open the URL in a new tab instead of reusing the current tab. Default: false."],
+                ],
+                required: ["url"]
+            ),
+            toolDef(
+                name: "screen_recorder_browser_tabs",
+                description: "List browser tabs available through the DevTools endpoint.",
+                properties: [
+                    "backend": ["type": "string", "description": "Browser backend: 'chromium' or 'safari'."],
+                    "port": ["type": "integer", "description": "Automation port (default: 9222)"],
+                ]
+            ),
+            toolDef(
+                name: "screen_recorder_browser_open_tab",
+                description: "Open a new browser tab. Browser-native tab creation is safer and more reliable than opening tabs through desktop hotkeys.",
+                properties: [
+                    "backend": ["type": "string", "description": "Browser backend: 'chromium' or 'safari'."],
+                    "port": ["type": "integer", "description": "Automation port (default: 9222)"],
+                    "url": ["type": "string", "description": "URL to open"],
+                ],
+                required: ["url"]
+            ),
+            toolDef(
+                name: "screen_recorder_browser_activate_tab",
+                description: "Activate a browser tab by id, title match, or URL match.",
+                properties: [
+                    "backend": ["type": "string", "description": "Browser backend: 'chromium' or 'safari'."],
+                    "port": ["type": "integer", "description": "Automation port (default: 9222)"],
+                    "tab_id": ["type": "string", "description": "Exact browser tab ID"],
+                    "title_contains": ["type": "string", "description": "Find a tab whose title contains this text"],
+                    "url_contains": ["type": "string", "description": "Find a tab whose URL contains this text"],
+                ]
+            ),
+            toolDef(
+                name: "screen_recorder_browser_navigate",
+                description: "Navigate a browser tab to a URL using the browser's page API rather than keyboard shortcuts or the address bar.",
+                properties: [
+                    "backend": ["type": "string", "description": "Browser backend: 'chromium' or 'safari'."],
+                    "port": ["type": "integer", "description": "Automation port (default: 9222)"],
+                    "url": ["type": "string", "description": "Destination URL"],
+                    "tab_id": ["type": "string", "description": "Exact browser tab ID"],
+                    "title_contains": ["type": "string", "description": "Find a tab whose title contains this text"],
+                    "url_contains": ["type": "string", "description": "Find a tab whose URL contains this text"],
+                ],
+                required: ["url"]
+            ),
+            toolDef(
+                name: "screen_recorder_browser_eval",
+                description: "Evaluate JavaScript inside the browser tab. Use this for DOM state, page variables, and browser-native inspection instead of OCR when possible.",
+                properties: [
+                    "backend": ["type": "string", "description": "Browser backend: 'chromium' or 'safari'."],
+                    "port": ["type": "integer", "description": "Automation port (default: 9222)"],
+                    "expression": ["type": "string", "description": "JavaScript expression to evaluate"],
+                    "tab_id": ["type": "string", "description": "Exact browser tab ID"],
+                    "title_contains": ["type": "string", "description": "Find a tab whose title contains this text"],
+                    "url_contains": ["type": "string", "description": "Find a tab whose URL contains this text"],
+                ],
+                required: ["expression"]
+            ),
+            toolDef(
+                name: "screen_recorder_browser_click",
+                description: "Click a DOM element by CSS selector inside the browser. Prefer this over screen-coordinate clicking or OCR for webpage content.",
+                properties: [
+                    "backend": ["type": "string", "description": "Browser backend: 'chromium' or 'safari'."],
+                    "port": ["type": "integer", "description": "Automation port (default: 9222)"],
+                    "selector": ["type": "string", "description": "CSS selector to click"],
+                    "tab_id": ["type": "string", "description": "Exact browser tab ID"],
+                    "title_contains": ["type": "string", "description": "Find a tab whose title contains this text"],
+                    "url_contains": ["type": "string", "description": "Find a tab whose URL contains this text"],
+                ],
+                required: ["selector"]
+            ),
+            toolDef(
+                name: "screen_recorder_browser_type",
+                description: "Set the value of a browser DOM element by CSS selector.",
+                properties: [
+                    "backend": ["type": "string", "description": "Browser backend: 'chromium' or 'safari'."],
+                    "port": ["type": "integer", "description": "Automation port (default: 9222)"],
+                    "selector": ["type": "string", "description": "CSS selector to type into"],
+                    "text": ["type": "string", "description": "Text to set"],
+                    "tab_id": ["type": "string", "description": "Exact browser tab ID"],
+                    "title_contains": ["type": "string", "description": "Find a tab whose title contains this text"],
+                    "url_contains": ["type": "string", "description": "Find a tab whose URL contains this text"],
+                ],
+                required: ["selector", "text"]
+            ),
+            toolDef(
+                name: "screen_recorder_browser_press_key",
+                description: "Dispatch a keyboard key to the page's active element through browser APIs.",
+                properties: [
+                    "backend": ["type": "string", "description": "Browser backend: 'chromium' or 'safari'."],
+                    "port": ["type": "integer", "description": "Automation port (default: 9222)"],
+                    "key": ["type": "string", "description": "Key to dispatch, e.g. 'Enter'"],
+                    "tab_id": ["type": "string", "description": "Exact browser tab ID"],
+                    "title_contains": ["type": "string", "description": "Find a tab whose title contains this text"],
+                    "url_contains": ["type": "string", "description": "Find a tab whose URL contains this text"],
+                ],
+                required: ["key"]
+            ),
+            toolDef(
+                name: "screen_recorder_browser_screenshot",
+                description: "Capture a browser tab screenshot using the browser rendering pipeline rather than desktop screen capture.",
+                properties: [
+                    "backend": ["type": "string", "description": "Browser backend: 'chromium' or 'safari'."],
+                    "port": ["type": "integer", "description": "Automation port (default: 9222)"],
+                    "output_path": ["type": "string", "description": "Optional output file path"],
+                    "base64": ["type": "boolean", "description": "Also return base64 PNG data"],
+                    "tab_id": ["type": "string", "description": "Exact browser tab ID"],
+                    "title_contains": ["type": "string", "description": "Find a tab whose title contains this text"],
+                    "url_contains": ["type": "string", "description": "Find a tab whose URL contains this text"],
+                ]
             ),
             toolDef(
                 name: "screen_recorder_run_command",
@@ -941,17 +1321,114 @@ final class MCPServer {
                 ]
             ),
 
+            // --- Agent Control Lock Tools ---
+
+            toolDef(
+                name: "screen_recorder_lock_controls",
+                description: "IMPORTANT: Call this at the start of any automated workflow. Blocks all user mouse and keyboard input so your actions won't be interrupted. The user can still press the unlock hotkey to reclaim control at any time.",
+                properties: [
+                    "unlock_key": ["type": "string", "description": "Hotkey the user presses to override the lock. Format: 'cmd+shift+f12'. Default: 'cmd+shift+f12'."],
+                ]
+            ),
+            toolDef(
+                name: "screen_recorder_unlock_controls",
+                description: "Release the agent control lock and restore normal user input. Call this when your automated workflow is complete.",
+                properties: [:]
+            ),
+            toolDef(
+                name: "screen_recorder_control_status",
+                description: "Check whether the agent control lock is currently active.",
+                properties: [:]
+            ),
+
+            // --- App Lifecycle Tools ---
+
+            toolDef(
+                name: "screen_recorder_quit_app",
+                description: "Quit a running application by name. Use force=true to force-quit unresponsive apps.",
+                properties: [
+                    "name": ["type": "string", "description": "App name (case-insensitive)"],
+                    "force": ["type": "boolean", "description": "Force-quit (SIGKILL). Default: false (graceful)"],
+                ],
+                required: ["name"]
+            ),
+            toolDef(
+                name: "screen_recorder_relaunch_app",
+                description: "Quit and relaunch an application. Useful when an app is in a bad state.",
+                properties: [
+                    "name": ["type": "string", "description": "App name (case-insensitive)"],
+                ],
+                required: ["name"]
+            ),
+            toolDef(
+                name: "screen_recorder_hide_app",
+                description: "Hide an app (⌘H). The app remains running but its windows are hidden.",
+                properties: [
+                    "name": ["type": "string", "description": "App name (case-insensitive)"],
+                ],
+                required: ["name"]
+            ),
+
+            // --- Window Manipulation Tools ---
+
+            toolDef(
+                name: "screen_recorder_window_move",
+                description: "Move the frontmost window of an app to specific screen coordinates.",
+                properties: [
+                    "x": ["type": "number", "description": "New X position (screen points, top-left origin)"],
+                    "y": ["type": "number", "description": "New Y position (screen points, top-left origin)"],
+                    "app": ["type": "string", "description": "App name. Default: frontmost app."],
+                ],
+                required: ["x", "y"]
+            ),
+            toolDef(
+                name: "screen_recorder_window_resize",
+                description: "Resize the frontmost window of an app to specific dimensions.",
+                properties: [
+                    "width": ["type": "number", "description": "New width in screen points"],
+                    "height": ["type": "number", "description": "New height in screen points"],
+                    "app": ["type": "string", "description": "App name. Default: frontmost app."],
+                ],
+                required: ["width", "height"]
+            ),
+            toolDef(
+                name: "screen_recorder_window_minimize",
+                description: "Minimize the frontmost window of an app to the Dock.",
+                properties: [
+                    "app": ["type": "string", "description": "App name. Default: frontmost app."],
+                ]
+            ),
+            toolDef(
+                name: "screen_recorder_window_restore",
+                description: "Restore (unminimize) the frontmost window of an app from the Dock.",
+                properties: [
+                    "app": ["type": "string", "description": "App name. Default: frontmost app."],
+                ]
+            ),
+
+            // --- Sleep / Delay ---
+
+            toolDef(
+                name: "screen_recorder_sleep",
+                description: "Pause execution for a specified number of milliseconds. Useful for waiting for animations, page loads, or app startup.",
+                properties: [
+                    "ms": ["type": "integer", "description": "Duration to sleep in milliseconds (e.g. 1000 = 1 second)"],
+                ],
+                required: ["ms"]
+            ),
+
             // --- Safety Tools ---
 
             toolDef(
                 name: "screen_recorder_safety_settings",
-                description: "Get current safety settings (kill switch status, confirmation mode, rate limit, app allowlist, recent actions).",
+                description: "Get current safety settings (kill switch status, execution mode, confirmation mode, rate limit, app allowlist, recent actions).",
                 properties: [:]
             ),
             toolDef(
                 name: "screen_recorder_safety_configure",
-                description: "Configure safety settings for computer control. Set enabled, confirmation_mode, max_actions_per_second, or app_allowlist.",
+                description: "Configure safety settings for computer control. Set execution_mode, enabled, confirmation_mode, max_actions_per_second, or app_allowlist.",
                 properties: [
+                    "execution_mode": ["type": "string", "description": "Execution mode: 'foreground', 'background_safe', or 'background_strict'."],
                     "enabled": ["type": "boolean", "description": "Enable/disable computer control"],
                     "confirmation_mode": ["type": "boolean", "description": "Require user confirmation before each action"],
                     "max_actions_per_second": ["type": "integer", "description": "Rate limit (0 = unlimited, default: 10)"],
@@ -966,6 +1443,34 @@ final class MCPServer {
                 ]
             ),
         ]
+    }
+
+    // MARK: - Auto-Launch
+
+    /// Attempt to open the Screen Recorder app from standard locations.
+    private func autoLaunchApp() async {
+        let candidates: [String] = [
+            "/Applications/Screen Recorder.app",
+            NSString(string: "~/Applications/Screen Recorder.app").expandingTildeInPath,
+            // Also try the built app in DerivedData for dev builds
+        ]
+        for path in candidates {
+            let url = URL(fileURLWithPath: path)
+            if FileManager.default.fileExists(atPath: path) {
+                let cfg = NSWorkspace.OpenConfiguration()
+                cfg.activates = false
+                try? await NSWorkspace.shared.openApplication(at: url, configuration: cfg)
+                return
+            }
+        }
+        // Fallback: open by bundle ID
+        if let url = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.codeitlikemiley.screenrecorder"
+        ) {
+            let cfg = NSWorkspace.OpenConfiguration()
+            cfg.activates = false
+            try? await NSWorkspace.shared.openApplication(at: url, configuration: cfg)
+        }
     }
 
     // MARK: - Helpers

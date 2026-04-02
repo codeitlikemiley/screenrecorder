@@ -1,602 +1,631 @@
-# Screen Recorder
+# ScreenRecorder (`sr`)
 
-A native macOS screen recorder designed for developers. Record your screen, camera, and microphone with global hotkeys — then let AI generate step-by-step workflow documentation from your recordings.
+A macOS app with a CLI and MCP server for screen recording, annotation, and full AI-agent computer control of native macOS applications.
 
-![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue)
-![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange)
-![License: MIT](https://img.shields.io/badge/License-MIT-green)
-[![Release](https://github.com/codeitlikemiley/screenrecorder/actions/workflows/release.yml/badge.svg)](https://github.com/codeitlikemiley/screenrecorder/actions/workflows/release.yml)
+---
 
-<p align="center">
-  <img src="docs/images/system-tray-menu.png" width="380" alt="System Tray Menu">
-</p>
+## Table of Contents
 
-## Features
+- [Installation](#installation)
+- [Architecture](#architecture)
+- [Agent Automation Loop](#agent-automation-loop)
+- [CLI Reference](#cli-reference)
+  - [status](#status)
+  - [screenshot](#screenshot)
+  - [detect](#detect)
+  - [windows](#windows)
+  - [app](#app)
+  - [browser](#browser)
+  - [input](#input)
+  - [ax](#ax)
+  - [annotate](#annotate)
+  - [record](#record)
+  - [session](#session)
+  - [screen](#screen)
+  - [tool](#tool)
+  - [shell](#shell)
+- [MCP Server Tools](#mcp-server-tools)
+- [Accessibility Permission](#accessibility-permission)
+- [Safety Gate](#safety-gate)
 
-- **Screen Recording** — Native retina resolution via ScreenCaptureKit
-- **Camera Overlay** — Circular, draggable webcam preview composited into the recording
-- **Microphone + System Audio** — Voice and system audio with adjustable mic volume
-- **Keystroke Overlay** — Floating key display with coalescing and repeat counts
-- **Noise Suppression** — macOS Voice Isolation for clean audio
-- **Global Hotkeys** — Fully customizable, works from any app
-- **HEVC (H.265)** — ~50% smaller files than H.264
-- **AI Step Generation** — Analyze recordings with OpenAI, Anthropic, Gemini, or any compatible API
-- **Computer Control** — AI-driven clicking, typing, scrolling, dragging, app launching, and shell commands
-- **Accessibility Tree** — Discover and interact with real UI elements (buttons, text fields, menus) via AXUIElement
-- **Safety System** — Kill switch hotkey (⌘⌥⎋), rate limiting, app allowlist, and full action audit log
-- **Recording Library** — Browse, re-process, and manage all past recordings
-- **CLI + MCP Server** — Bundled inside the app, installable from Settings
-- **License Gating** — Activate via CLI or in-app Settings; features lock until activated
-- **Menu Bar App** — Lives in the menu bar, no dock icon
+---
 
-## Install
+## Installation
 
-### Homebrew (Recommended)
-
-One command installs the app, CLI (`sr`), and MCP server (`sr-mcp`):
-
-```bash
-brew install --cask codeitlikemiley/tap/screenrecorder
-```
-
-This automatically:
-- Installs `ScreenRecorder.app` to `/Applications`
-- Creates `/usr/local/bin/sr` and `/usr/local/bin/sr-mcp` symlinks
-- Removes Gatekeeper quarantine
-
-### Download DMG
-
-1. Download the latest DMG from [**Releases**](https://github.com/codeitlikemiley/screenrecorder/releases/latest):
-
-   ```bash
-   curl -LO https://github.com/codeitlikemiley/screenrecorder/releases/download/v1.0.0/ScreenRecorder-1.0.0.dmg
-   ```
-
-2. Open the `.dmg` and drag **Screen Recorder** to **Applications**.
-
-3. On first launch, macOS may show a Gatekeeper warning:
-
-   ```bash
-   xattr -d com.apple.quarantine /Applications/Screen\ Recorder.app
-   ```
-
-4. **Install CLI tools**: Open **Settings → CLI Tools → Install CLI Tools** to create terminal commands.
-
-### Build from Source
+The `sr` CLI ships inside the ScreenRecorder app bundle.
 
 ```bash
-git clone https://github.com/codeitlikemiley/screenrecorder.git
-cd screenrecorder
+# Add to your PATH (adjust version as needed)
+export PATH="/Applications/ScreenRecorder.app/Contents/MacOS:$PATH"
 
-# Create .env with your signing identity
-cat > .env << 'EOF'
-SIGNING_IDENTITY="Developer ID Application: Your Name (XXXXXXXXXX)"
-APPLE_TEAM_ID="XXXXXXXXXX"
-SR_LICENSE_SERVER=http://localhost:3000   # optional, for local dev
-EOF
+# Or symlink
+ln -s /Applications/ScreenRecorder.app/Contents/MacOS/sr /usr/local/bin/sr
 
-./build.sh
-open .build/ScreenRecorder.app
-```
-
-> Requires macOS 14+ and Xcode Command Line Tools. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
-
-## License Activation
-
-A license key is required to use recording features. Without one, the menu bar shows **🔑 Activate License** and recording/annotation features are disabled.
-
-### Get a License Key
-
-Sign up at [screenrecorder.dev](https://screenrecorder.dev) to get your license key.
-
-| Plan | MCP Tool Calls | Price |
-|------|---------------|-------|
-| Free | 10,000 / day | $0 |
-| Pro | Unlimited | $8/mo |
-
-### Activate
-
-**In the app**: Settings → License → paste key → Activate
-
-**Via CLI**:
-
-```bash
-sr activate SR-XXXX-XXXX-XXXX-XXXX
-```
-
-License data is stored in a shared `UserDefaults` suite — activating in one place works everywhere (app, CLI, MCP server).
-
-```bash
-# Check status
+# Verify
 sr status
-
-# Deactivate
-sr deactivate
 ```
 
-## Global Hotkeys
+The app must be running for CLI commands to work (the CLI talks to the app over a local JSON-RPC socket on port 19820).
 
-All hotkeys are customizable in **Settings → Shortcuts**. Hotkeys only work when a license is activated.
-
-### Recording & Capture
-
-| Default Shortcut | Action |
-|------------------|--------|
-| `⌘⇧4` | Start / Stop recording |
-| `⌘⇧S` | Start / Stop recording (alt) |
-| `⌘⇧3` | Annotation screenshot (save to file) |
-| `⌘⇧⌥3` | Annotation screenshot (alt) |
-| `⌘⇧C` | Toggle camera |
-| `⌘⇧M` | Toggle microphone |
-| `⌘⇧K` | Toggle keystroke overlay |
-| `⌘⇧H` | Show / Hide control bar |
-| `⌘⇧F` | Open recordings folder |
-| `⌘⇧L` | Recording Library |
-| `⌘⌥⎋` | Computer Control kill switch (toggle) |
-| `⌘⇧=` | Mic volume up |
-| `⌘⇧-` | Mic volume down |
-| `⌘⇧0` | Reset mic volume |
-| `⌘,` | Open settings |
-
-### Annotation (Doodle Mode)
-
-| Default Shortcut | Action |
-|------------------|--------|
-| `⌘⇧D` | Toggle annotation mode |
-| `⌘⇧X` | Clear annotations |
-| `⌘1` | Pen tool |
-| `⌘2` | Line tool |
-| `⌘3` | Arrow tool |
-| `⌘4` | Rectangle tool |
-| `⌘5` | Ellipse tool |
-| `⌘6` | Text tool |
-| `⌘Z` | Undo annotation |
-| `⌘⇧Z` | Redo annotation |
-
-<p align="center">
-  <img src="docs/images/annotation-toolbar.png" width="500" alt="Annotation Toolbar">
-</p>
-
-> ⚠️ **macOS Screenshot Conflict:**
-> `⌘⇧3` and `⌘⇧4` conflict with macOS default screenshot shortcuts. Each has an alt fallback (`⌘⇧S` and `⌘⇧⌥3`) that works without changes. For the best experience, disable the macOS defaults:
->
-> **System Settings → Keyboard → Keyboard Shortcuts → Screenshots** → uncheck `⌘⇧3`, `⌘⇧4`, and `⌘⇧5`.
-
-## AI Step Generation
-
-After recording, the app analyzes your session and generates step-by-step workflow documentation using AI.
-
-**Setup:** Go to **Settings** (`⌘,`) → **AI Providers** → **Add Provider** and pick a preset:
-
-| Protocol | Presets |
-|----------|---------|
-| **OpenAI** | OpenAI, DeepSeek, Qwen, Groq, Kimi, GLM, MiniMax |
-| **Anthropic** | Anthropic, MiniMax, Kimi, GLM |
-| **Gemini** | Google Gemini |
-
-Each provider is a fully editable **profile** — configure the base URL, model, max tokens, temperature, and API keys. You can add multiple profiles and switch between them at any time.
-
-Want to use a **local model**? Add a Custom Provider pointing to Ollama, LM Studio, or any OpenAI/Anthropic-compatible endpoint.
-
-> See [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md) for the full provider list, custom endpoint setup, and configuration guide.
-
-### Generated Artifacts
-
-Each recording produces a set of files in your recordings directory (`~/Movies/ScreenRecorder/` by default):
-
-```
-Recording_2026-03-15_04-30-00.mov          # Screen recording (HEVC)
-Recording_2026-03-15_04-30-00_session.json  # Session metadata (duration, events, keystrokes)
-Recording_2026-03-15_04-30-00_workflow.json # AI-generated step-by-step workflow
-Recording_2026-03-15_04-30-00_frames/       # Extracted key frames (PNG)
-```
-
-| File | Description |
-|------|-------------|
-| `_session.json` | Recording metadata — date, duration, input events, processing state |
-| `_workflow.json` | AI-generated workflow with titled steps, descriptions, and frame references |
-| `_frames/` | Key frames extracted from the video, used as context for AI analysis |
-
-## Session Viewer
-
-After a recording is processed, the **Session Viewer** opens automatically. You can also reopen any past session from the Recording Library.
-
-The viewer is a split-pane interface:
-
-- **Steps Panel** (left) — AI-generated step-by-step workflow with numbered steps, action types, and descriptions
-- **Screenshot Preview** (right) — Key frame for the selected step, synced to your selection
-- **AI Prompt Tab** — View or copy the raw prompt used for AI analysis
-
-<p align="center">
-  <img src="docs/images/session-viewer.png" width="600" alt="Session Viewer">
-</p>
-
-### Editing Steps
-
-Steps are fully editable inside the viewer:
-
-- **Edit** title and description inline
-- **Reorder** steps via drag-and-drop
-- **Delete** steps you don't need
-
-### Exporting
-
-Click **Export** in the title bar to copy or save the workflow:
-
-| Format | Description |
-|--------|-------------|
-| **Markdown Steps** | Full document with steps, screenshots, and metadata |
-| **AI Agent Prompt** | Ready-to-paste prompt for Cursor, Copilot, Codex, etc. |
-| **GitHub Issue** | Issue body with task checklist and context |
-| **JSON Workflow** | Machine-readable workflow for automation |
-
-<p align="center">
-  <img src="docs/images/export-options.png" width="600" alt="Export Options">
-</p>
-
-## Recording Library
-
-Access all past recordings from the menu bar via **📚 Recording Library**.
-
-- **Browse** — View all recordings with thumbnails, dates, duration, and status badges (`Steps Generated`, `Unprocessed`, `Processing`, `Failed`)
-- **Open** — Double-click or hit the eye icon to load the session in the Session Viewer
-- **Re-process** — Re-run AI analysis with a different provider or updated settings (reuses existing frames, skips re-extraction)
-- **Delete** — Remove a recording and all its associated artifacts (video, session, workflow, frames) with confirmation
-- **Reveal in Finder** — Jump to the recording file in Finder
-
-<p align="center">
-  <img src="docs/images/recording-library.png" width="600" alt="Recording Library">
-</p>
-
-## CLI
-
-The `sr` binary is bundled inside `ScreenRecorder.app` and installed to `/usr/local/bin/sr` via Homebrew or in-app Settings.
-
-> The `sr` CLI requires the Screen Recorder app to be running.
-
-### License & Status
-
-```bash
-sr activate SR-XXXX-XXXX-XXXX-XXXX   # Activate license
-sr deactivate                         # Remove license
-sr status                             # App state (recording, camera, mic, etc.)
-```
-
-### Recording
-
-```bash
-sr record start                       # Start with current settings
-sr record start --camera --mic        # Enable camera + mic
-sr record start --fps 60              # Set frame rate (15/30/60)
-sr record start --no-camera --no-mic  # Disable camera + mic
-sr record pause                       # Pause recording
-sr record resume                      # Resume recording
-sr record stop                        # Stop and save
-```
-
-### Screenshots
-
-```bash
-sr screenshot                                # Full screen
-sr screenshot --output ~/Desktop/shot.png    # Custom output path
-sr screenshot --window "Safari"              # Capture specific window by name
-sr screenshot --window-id 12345              # Capture by window ID
-sr screenshot --region 100,200,800,600       # Capture region (x,y,w,h)
-sr screenshot --clean                        # Hide annotations during capture
-```
-
-### Annotations
-
-```bash
-sr annotate add --type arrow --points 100,100,300,200 --color red
-sr annotate add --type rectangle --points 50,50,400,300
-sr annotate add --type text --points 200,100 --text "Click here"
-sr annotate undo
-sr annotate redo
-sr annotate clear
-sr annotate list --json                # List strokes with full geometry
-```
-
-### Drawing Tools
-
-```bash
-sr tool select arrow                   # pen, line, arrow, rectangle, ellipse, text, move
-sr tool color red                      # red, green, blue, yellow, or hex #RRGGBB
-sr tool width 5                        # Line width (1-20)
-```
-
-### Screen & Window Awareness
-
-```bash
-sr screen                              # Display info (resolution, scale, frame)
-sr screen --all                        # All displays
-sr windows                             # List all windows
-sr windows --app Safari                # Filter by app name
-sr windows --focused                   # Get focused window
-sr windows --json                      # JSON output
-```
-
-### Element Detection (Vision OCR)
-
-Detect text UI elements using macOS Vision framework. Returns bounding boxes and center points — essential for AI agents placing annotations on non-browser apps (iOS Simulator, desktop apps).
-
-```bash
-sr detect                              # Detect elements on full screen
-sr detect --window "Simulator"         # Detect in a specific window
-sr detect --min-confidence 0.8         # Filter by confidence (0-1)
-sr detect --json                       # JSON output with bounds + centers
-```
-
-### Annotation Sessions
-
-Save, load, and switch between named annotation sets.
-
-```bash
-sr session new "Login Flow"            # Create new session
-sr session new "Bug Report" --from-current  # Copy current annotations
-sr session list                        # List saved sessions
-sr session switch "Login Flow"         # Switch to session (saves current)
-sr session delete "Bug Report"         # Delete session
-sr session save                        # Save current session to disk
-sr session export "Login Flow"         # Print JSON to stdout
-sr session export "Login Flow" -o flow.json  # Save to file
-```
-
-### Computer Control
-
-Control the computer programmatically — click, type, scroll, launch apps, and run commands. Requires Accessibility permission (System Settings → Privacy & Security → Accessibility).
-
-```bash
-# Input synthesis
-sr input click 500 300              # Click at coordinates
-sr input right-click 500 300        # Right-click (context menu)
-sr input double-click 500 300       # Double-click
-sr input drag 100 200 500 300       # Drag from (100,200) to (500,300)
-sr input scroll 500 300 --dy -5     # Scroll down at position
-sr input move 500 300               # Move cursor
-sr input type "hello world"         # Type text
-sr input key return                 # Press named key (return, tab, space, escape, etc.)
-sr input hotkey cmd+c               # Keyboard shortcut
-sr input click-text "Submit"        # OCR detect text → click its center
-sr input check-access               # Check accessibility permission
-
-# App control
-sr app launch Safari                # Launch app by name or bundle ID
-sr app activate Safari              # Bring app to front
-sr app list                         # List running apps
-
-# Shell commands
-sr shell "echo hello"               # Run shell command
-sr shell "npm test" --timeout 60    # With timeout (seconds)
-sr shell "ls -la" --json            # JSON-formatted output
-```
-
-## MCP Server (AI Tool Integration)
-
-The MCP server (`sr-mcp`) is bundled inside the app. It gives AI assistants (Claude Code, Cursor, Windsurf, etc.) **full programmatic control** — everything the CLI can do, the MCP server can do too.
-
-> **51 tools** across 10 categories: status, recording, screenshots, annotations, drawing, sessions, computer control, accessibility tree, shell execution, and safety.
-
-### Setup
-
-1. **Install** via Homebrew or Settings → CLI Tools → Install CLI Tools
-
-2. **Add to your MCP client config:**
-
-   **Claude Code** (`~/.claude.json`):
-
-   ```json
-   {
-     "mcpServers": {
-       "screen-recorder": {
-         "command": "/usr/local/bin/sr-mcp",
-         "args": ["serve"]
-       }
-     }
-   }
-   ```
-
-   **Cursor** (`.cursor/mcp.json`):
-
-   ```json
-   {
-     "mcpServers": {
-       "screen-recorder": {
-         "command": "/usr/local/bin/sr-mcp",
-         "args": ["serve"]
-       }
-     }
-   }
-   ```
-
-3. **Make sure Screen Recorder is running** — the MCP server proxies tool calls to the app via its local JSON-RPC server.
-
-### Available Tools
-
-#### Status & Screen Info
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_status` | Get current state — recording, camera, mic, annotation mode, active session |
-| `screen_recorder_screen_info` | Display resolution, scale factor, visible frame (supports multi-monitor) |
-| `screen_recorder_list_windows` | List all windows with app name, title, bounds, window ID. Filter by `app` name |
-| `screen_recorder_focused_window` | Get the currently focused window (app, title, bounds, ID) |
-
-#### Element Detection (Vision OCR)
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_detect_elements` | Detect text UI elements via macOS Vision. Returns bounding boxes, center points, and confidence scores. Filter by `window`, `window_id`, or `min_confidence` |
-
-#### Recording
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_start` | Start recording. Options: `camera` (bool), `mic` (bool), `keystrokes` (bool), `fps` (15/30/60) |
-| `screen_recorder_stop` | Stop recording and save video to disk |
-| `screen_recorder_pause` | Pause the current recording |
-| `screen_recorder_resume` | Resume a paused recording |
-
-#### Screenshots
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_screenshot` | Capture screenshot. Options: `output` (path), `window` (name), `window_id`, `region` (x,y,w,h), `clean` (hide annotations) |
-
-#### Annotations
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_annotate` | Add shapes: `arrow`, `rectangle`, `ellipse`, `line`, `pen`, `text`. Specify `points`, `color`, `line_width`, `window_ref` for window-relative coords |
-| `screen_recorder_annotate_activate` | Enter annotation mode (show toolbar) |
-| `screen_recorder_annotate_deactivate` | Exit annotation mode (hide toolbar) |
-| `screen_recorder_annotate_list` | List all strokes with full geometry — bounds, length, angle, area, color, type |
-| `screen_recorder_annotate_undo` | Undo last annotation stroke |
-| `screen_recorder_annotate_redo` | Redo last undone stroke |
-| `screen_recorder_annotate_clear` | Clear all annotations from the screen |
-
-#### Drawing Tool Settings
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_tool` | Select active tool: `pen`, `line`, `arrow`, `rectangle`, `ellipse`, `text`, `move` |
-| `screen_recorder_tool_color` | Set drawing color — named (`red`, `green`, `blue`, `yellow`) or hex (`#FF5500`) |
-| `screen_recorder_tool_width` | Set line width (1–20) |
-
-#### Annotation Sessions
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_session_new` | Create named session. Options: `name` (required), `from_current` (copy existing strokes) |
-| `screen_recorder_session_list` | List all saved sessions with names and stroke counts |
-| `screen_recorder_session_switch` | Switch to a session by name (auto-saves current) |
-| `screen_recorder_session_delete` | Delete a session by name |
-| `screen_recorder_session_save` | Save current annotations to the active session |
-| `screen_recorder_session_export` | Export session as JSON. Options: `name`, `output` (file path) |
-
-#### Computer Control (Input Synthesis)
-
-AI agents can click, type, scroll, drag, launch apps, and run commands — everything needed to reproduce bugs or automate UI workflows. Requires macOS **Accessibility permission**.
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_click` | Click at `(x, y)`. Options: `window_ref` for window-relative coords |
-| `screen_recorder_right_click` | Right-click (context menu) at `(x, y)` |
-| `screen_recorder_double_click` | Double-click at `(x, y)` |
-| `screen_recorder_drag` | Drag from `(from_x, from_y)` to `(to_x, to_y)`. Options: `duration`, `steps` |
-| `screen_recorder_scroll` | Scroll at `(x, y)` with `delta_x` / `delta_y`. Supports `window_ref` |
-| `screen_recorder_move_mouse` | Move cursor to `(x, y)` without clicking |
-| `screen_recorder_type_text` | Type text string. Options: `interval_ms` for typing speed |
-| `screen_recorder_press_key` | Press named key (`return`, `tab`, `space`, `delete`, `escape`, arrows, `f1`–`f12`). Supports `modifiers` |
-| `screen_recorder_hotkey` | Execute keyboard shortcut — `cmd+c`, `ctrl+shift+4`, `cmd+shift+z`, etc. |
-| `screen_recorder_click_element` | OCR detect text on screen → automatically click its center. Specify `text` and optional `window` |
-
-#### App Control
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_launch_app` | Launch app by `name` or `bundle_id` |
-| `screen_recorder_activate_app` | Bring app to foreground by `name` or `bundle_id` |
-| `screen_recorder_list_apps` | List all running applications (name, bundle ID, PID) |
-
-#### Shell Execution
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_run_command` | Execute shell command. Options: `command`, `timeout` (seconds). Returns `stdout`, `stderr`, `exit_code` |
-
-#### Accessibility Tree (AXUIElement)
-
-Go beyond OCR — discover and interact with real UI elements (buttons, text fields, menus, checkboxes) via the macOS Accessibility API. More reliable than coordinate-based clicks.
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_ax_tree` | Get the full UI element tree. Filter by `app`, `bundle_id`, or `pid`. Options: `max_depth` |
-| `screen_recorder_ax_find` | Find elements by `title` (substring) and/or `role` (`AXButton`, `AXTextField`, `AXCheckBox`, etc.) |
-| `screen_recorder_ax_press` | Press a UI element by `title` — triggers AXPress action, more reliable than coordinate clicks |
-| `screen_recorder_ax_set_value` | Set element value — type into text fields, toggle checkboxes, move sliders |
-| `screen_recorder_ax_focused` | Get the currently focused UI element with its role, title, value, and frame |
-| `screen_recorder_ax_actionable` | List all actionable elements in an app — buttons, fields, checkboxes with titles and actions |
-
-#### Accessibility Permission
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_check_accessibility` | Check if Accessibility permission is granted. Prompts the user if not |
-
-#### Safety System
-
-All computer control actions are gated by a safety system with kill switch (`⌘⌥⎋`), rate limiting, and audit logging.
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_safety_settings` | Get safety status — enabled, kill switch state, confirmation mode, rate limit, app allowlist |
-| `screen_recorder_safety_configure` | Configure: `enabled` (bool), `confirmation_mode` (bool), `max_actions_per_second` (default 10), `app_allowlist` (array) |
-| `screen_recorder_safety_log` | Audit log of recent actions — timestamps, descriptions, allowed/blocked status. Options: `count` (default 20) |
-
-#### License & Usage
-
-| Tool | Description |
-|------|-------------|
-| `screen_recorder_usage` | Check license plan (free/pro), daily MCP tool call count, and remaining quota |
-
-### Workflow Examples
-
-**UI Documentation** — annotate and capture app screens:
-
-```
-1. screen_recorder_list_windows       → Find target window (e.g. iOS Simulator)
-2. screen_recorder_detect_elements    → OCR text elements with bounding boxes
-3. screen_recorder_annotate           → Draw arrows/labels using window-relative coords
-4. screen_recorder_screenshot         → Capture annotated result
-5. screen_recorder_session_save       → Persist for later reference
-```
-
-**Bug Reproduction** — record step-by-step with computer control:
-
-```
-1. screen_recorder_start              → Begin recording
-2. screen_recorder_launch_app         → Launch the target app
-3. screen_recorder_ax_find            → Find the relevant UI element
-4. screen_recorder_ax_press           → Click the button / menu item
-5. screen_recorder_type_text          → Enter test data
-6. screen_recorder_hotkey             → Trigger keyboard shortcut
-7. screen_recorder_screenshot         → Capture the result
-8. screen_recorder_stop               → Stop recording
-```
-
-**Automated Testing** — interact with real UI elements programmatically:
-
-```
-1. screen_recorder_launch_app         → Launch app under test
-2. screen_recorder_ax_actionable      → List all interactive elements
-3. screen_recorder_ax_set_value       → Fill in form fields
-4. screen_recorder_ax_press           → Submit the form
-5. screen_recorder_run_command        → Run verification script
-6. screen_recorder_screenshot         → Capture final state
-```
+---
 
 ## Architecture
 
 ```
-ScreenRecorder.app/Contents/MacOS/
-├── ScreenRecorder    # Main GUI app (menu bar)
-├── sr                # CLI binary
-└── sr-mcp            # MCP server binary
+AI Agent / MCP Client
+       │
+       ▼
+ MCP Server (stdio)          ← for Cursor, Claude Desktop, etc.
+       │
+       ▼
+  AgentRouter (JSON-RPC)     ← single dispatcher for all commands
+  ┌────────────────────────────────────────┐
+  │  AccessibilityBridge (AX API)          │
+  │  InputSynthesizer    (CGEvent)         │
+  │  VisionOCR           (screenshot+OCR) │
+  └────────────────────────────────────────┘
+       │
+       ▼
+   sr CLI (ArgumentParser)  ← for terminal / agent shell use
 ```
 
-All three binaries share license data via a `UserDefaults` suite (`com.codeitlikemiley.screenrecorder.shared`). Activating a license in any one of them makes it available to the others instantly.
+The CLI and MCP server are both thin clients over the same JSON-RPC dispatcher. Every capability available via the CLI is also available via MCP, and vice versa.
 
-## Documentation
+---
 
-| Doc | Description |
-|-----|-------------|
-| [AI Providers](docs/AI_PROVIDERS.md) | Full AI provider setup, presets, custom endpoints |
-| [Architecture](docs/ARCHITECTURE.md) | Source tree, design patterns, request flow |
-| [Development](docs/DEVELOPMENT.md) | Build, permissions, config storage |
-| [Release](docs/RELEASE.md) | Signing, notarization, DMG creation |
-| [Contributing](docs/CONTRIBUTING.md) | How to contribute, PR guidelines |
+## Agent Automation Loop
 
-## License
+This is the core pattern for AI-driven native app automation:
 
-[MIT](LICENSE)
+```
+1. DISCOVER  →  sr windows --json                        # find window IDs & bounds
+                sr app list --json                       # what apps are running?
+
+2. LAUNCH    →  sr app launch "Safari"                   # launch in background (default)
+                sr app launch "Safari" --activate        # launch and focus it
+                sr app activate "Safari"                 # bring existing app to front
+
+3. CAPTURE   →  sr screenshot --window "Safari"          # get current visual state
+                                                         # auto-caps at 4.9 MB, JPEG fallback
+
+4. DETECT    →  sr detect --window "Safari" --json       # Vision OCR → text + bounding boxes
+                sr ax actionable --app "Safari" --json   # AX API → all clickable elements + coords
+
+5. INTERACT  →  sr input click <x> <y>                   # click by coordinate
+                sr ax press --app "Safari" --title "Go"  # click by element label (most reliable)
+                sr input type-to-field \
+                  --field "Address and Search Bar" \
+                  --text "https://youtube.com" \
+                  --app "Safari"                         # find field + type atomically
+
+6. VERIFY    →  sr screenshot --window "Safari"          # confirm the result
+```
+
+### Choosing Between `detect` and `ax actionable`
+
+| Method | Best For | Reliability |
+|--------|----------|-------------|
+| `sr detect` | Reading visible text, finding labels | Good for text elements |
+| `sr ax actionable` | Buttons, text fields, menus, native chrome | More reliable for interactive elements |
+| Both together | Maximum coverage | Best approach |
+
+---
+
+## CLI Reference
+
+All commands talk to the running app over `localhost:19820`. Override with `--port`.
+
+---
+
+### `status`
+
+```bash
+sr status          # check if app is running
+sr status --json   # JSON output
+```
+
+---
+
+### `screenshot`
+
+Capture a screenshot. **By default, automatically caps output at 4.9 MB** (just under the 5 MB API limit) by converting to JPEG and reducing quality if needed.
+
+```bash
+sr screenshot                              # full screen
+sr screenshot --window "Safari"            # specific app window
+sr screenshot --window-id 12345            # by window ID
+sr screenshot --region 100,200,800,600     # x,y,width,height region
+sr screenshot -o ~/Desktop/shot.png        # save to file
+sr screenshot --clean                      # without annotations overlay
+sr screenshot --base64                     # print base64 to stdout
+
+# Size control (important for AI agents)
+sr screenshot --quality 0.8               # JPEG at 80% quality (~300-800 KB)
+sr screenshot --scale 0.5                 # 50% resolution (fast, small)
+sr screenshot --max-bytes 4500000         # custom byte cap
+sr screenshot --window "Safari" --quality 0.8 --scale 0.75  # combined
+```
+
+**Response includes:** `file` path, `width`, `height`, `size_bytes`
+
+---
+
+### `detect`
+
+Vision OCR: capture a screenshot and identify all text elements with bounding boxes and center coordinates.
+
+```bash
+sr detect                               # full screen OCR
+sr detect --window "Safari"             # specific window
+sr detect --window-id 12345             # by window ID
+sr detect --region 100,200,800,600      # region only
+sr detect --min-confidence 0.8          # stricter confidence filter
+sr detect --json                        # JSON output
+```
+
+**JSON output per element:**
+```json
+{
+  "text": "Search",
+  "confidence": 0.98,
+  "bounds": { "x": 100, "y": 200, "width": 300, "height": 40 },
+  "center": { "x": 250, "y": 220 }
+}
+```
+
+Use `center.x` and `center.y` directly with `sr input click`.
+
+---
+
+### `windows`
+
+List on-screen windows with their bounds and IDs.
+
+```bash
+sr windows                     # all visible windows
+sr windows --app "Safari"      # filter by app name
+sr windows --focused           # only the frontmost window
+sr windows --json              # JSON output
+```
+
+**JSON output per window:**
+```json
+{
+  "id": 1234,
+  "app": "Safari",
+  "title": "YouTube – Google Chrome",
+  "bounds": { "x": 0, "y": 0, "width": 1440, "height": 900 }
+}
+```
+
+---
+
+### `app`
+
+Launch, activate, and list macOS applications.
+
+```bash
+sr app launch "Safari"                     # launch in background (default)
+sr app launch "Safari" --activate          # launch and focus it
+sr app launch "com.apple.Safari"           # by bundle ID
+sr app activate "Safari"                   # bring to front (waits for focus, max 2s)
+sr app list                                # list all running apps
+sr app list --json
+```
+
+> **Note:** `launch` now defaults to background launch (`activate=false`) so it will not steal focus. `activate` and `launch --activate` still wait until the app is frontmost before returning.
+
+---
+
+### `browser`
+
+Browser automation for web pages. Chromium uses the DevTools Protocol; Safari uses `safaridriver`/WebDriver. Prefer this over OCR/mouse control for webpages.
+
+```bash
+sr browser launch --url https://example.com                    # isolated Chrome profile on port 9222
+sr browser launch-and-open https://example.com                # best first step for webpage tasks
+sr browser launch --backend safari --app Safari --url https://example.com
+sr browser tabs --json                                         # list tabs
+sr browser click 'button[type="submit"]'                       # DOM click by CSS selector
+sr browser type 'input[name="q"]' 'screen recorder'            # set input value via DOM
+sr browser eval 'document.title'                               # inspect page state with JS
+sr browser screenshot -o /tmp/page.png                         # capture page via browser renderer
+```
+
+> **Note:** Browser automation does not need your real mouse cursor or the frontmost app. It is the preferred control path for web pages. Keep desktop input tools for native browser chrome, OS dialogs, and non-browser apps. Safari requires `safaridriver`; on a new machine you may need to run `safaridriver --enable` once.
+>
+> Routing rule: if the instructed app is Safari, Chrome, Chromium, Brave, or Edge and the task is inside webpage content, use `browser.*` first. Use `app.*`, `input.*`, or `ax.*` only for browser chrome, permission prompts, downloads, file pickers, or OS-level UI.
+
+---
+
+### `input`
+
+Synthesize mouse and keyboard input. Requires [Accessibility permission](#accessibility-permission).
+
+```bash
+sr input check-access                            # verify permission is granted
+```
+
+#### Mouse
+
+```bash
+sr input click 500 300                           # left click
+sr input click 500 300 --count 2                 # double-click
+sr input right-click 500 300                     # right click
+sr input double-click 500 300                    # explicit double-click
+sr input drag 100 200 500 300                    # drag from (100,200) to (500,300)
+sr input scroll 500 300 --dy -300                # scroll down (negative = down)
+sr input scroll 500 300 --dx 100                 # scroll right
+sr input move 500 300                            # move cursor (no click)
+```
+
+#### Keyboard
+
+```bash
+sr input type "hello world"                      # type text
+sr input type "hello" --interval-ms 100          # slower typing (default: 50ms/char)
+sr input key return                              # press a key
+sr input key space
+sr input key escape
+sr input key tab
+sr input key delete
+sr input key f5
+sr input hotkey cmd+c                            # keyboard shortcut
+sr input hotkey cmd+shift+s
+sr input hotkey cmd+t
+sr input type "hello" --app "Safari"            # deliver to Safari without focusing it
+sr input hotkey cmd+l --app "Safari"            # background hotkey delivery
+```
+
+#### Smart Input (AX-powered)
+
+```bash
+# Find a text field by label/placeholder, focus it, and type — atomically
+sr input type-to-field \
+  --field "Address and Search Bar" \
+  --text "https://youtube.com" \
+  --app "Safari"
+
+sr input type-to-field \
+  --field "Search" \
+  --text "lakers vs pistons" \
+  --app "Safari" \
+  --interval-ms 80
+```
+
+#### Click by Text (OCR-powered)
+
+```bash
+sr input click-text "Submit"                     # find text on screen → click it
+sr input click-text "Go" --window "Safari"       # search within specific window
+```
+
+Window-targeted screenshots (`sr screenshot --window ...`) do not require that window to become frontmost. Background input delivery works best for click, type, key, hotkey, and scroll. Drag still requires focus.
+
+Falls back to AX API when OCR finds the element but cannot determine its center coordinates.
+
+---
+
+### `ax`
+
+Accessibility API commands — the most reliable way to interact with native macOS apps. Works directly on the UI element tree without coordinates or OCR.
+
+Requires [Accessibility permission](#accessibility-permission).
+
+```bash
+# Explore the UI tree
+sr ax tree --app "Safari"                        # full element tree (depth 3)
+sr ax tree --app "Safari" --max-depth 5          # deeper tree
+sr ax tree --app "Finder" --json
+
+# Find specific elements
+sr ax find --app "Safari" --title "Search"       # by label/title
+sr ax find --app "Safari" --role AXTextField     # all text fields
+sr ax find --app "Safari" --role AXButton        # all buttons
+sr ax find --app "Safari" --role AXMenuItem --max-results 20
+
+# Interact with elements
+sr ax press --app "Safari" --title "Go"          # press/click by title
+sr ax press --app "Safari" --title "File" --action AXPress
+
+# Set values in text fields, checkboxes, sliders
+sr ax set-value --app "Safari" \
+  --title "Address and Search Bar" \
+  --value "https://youtube.com"
+
+# What is focused right now?
+sr ax focused
+sr ax focused --json
+
+# List ALL actionable elements (buttons, fields, menus) with coordinates
+sr ax actionable --app "Safari"
+sr ax actionable --app "Safari" --max-results 50 --json
+```
+
+**Example `ax actionable` output:**
+```
+🎯 23 actionable element(s):
+──────────────────────────────
+  [AXButton] Back  @ (44, 52)  [AXPress]
+  [AXButton] Forward  @ (70, 52)  [AXPress]
+  [AXTextField] Address and Search Bar  @ (720, 52)  [AXPress, AXConfirm]
+  [AXMenuItem] File  @ (50, 11)  [AXPress]
+  ...
+```
+
+You can target by `--app`, `--bundle-id`, or `--pid`.
+
+---
+
+### `annotate`
+
+Draw visual annotations on screen. Useful for highlighting UI elements in documentation and demos.
+
+```bash
+# Mode
+sr annotate activate                             # enter annotation mode
+sr annotate deactivate                           # exit annotation mode
+
+# Draw shapes
+sr annotate add --arrow 100,200,300,400          # arrow from→to
+sr annotate add --rect 50,50,200,150             # rectangle (x,y,w,h)
+sr annotate add --ellipse 50,50,200,150          # ellipse/circle
+sr annotate add --line 100,200,300,400           # straight line
+sr annotate add --text "Click here" --at 200,100 # text label
+
+# Style options (add to any shape)
+sr annotate add --rect 50,50,200,150 --color blue --width 3
+sr annotate add --text "Important" --at 300,200 --color yellow --width 18
+
+# Colors: red, blue, green, yellow, white, orange, cyan, magenta
+
+# Raw JSON (for complex multi-annotation adds)
+sr annotate add --json '[
+  {"type":"arrow","from":{"x":0,"y":0},"to":{"x":100,"y":100},"color":"red"},
+  {"type":"rectangle","origin":{"x":50,"y":50},"size":{"width":200,"height":100}}
+]'
+
+# Manage
+sr annotate list                                 # list current annotations
+sr annotate undo                                 # undo last annotation
+sr annotate redo                                 # redo
+sr annotate clear                                # clear all
+```
+
+---
+
+### `record`
+
+Record screen to video.
+
+```bash
+sr record start                                  # start recording
+sr record start --output ~/Desktop/demo.mp4      # custom output
+sr record pause                                  # pause
+sr record resume                                 # resume
+sr record stop                                   # stop and finalize
+```
+
+---
+
+### `session`
+
+Manage named recording/annotation sessions.
+
+```bash
+sr session new --name "demo"                     # create new session
+sr session list                                  # list all sessions
+sr session switch <id>                           # switch to session
+sr session save                                  # save current session
+sr session export --format mp4                   # export session
+sr session delete <id>                           # delete session
+```
+
+---
+
+### `screen`
+
+Get information about connected displays.
+
+```bash
+sr screen                                        # list all screens
+sr screen --json                                 # JSON output
+```
+
+---
+
+### `tool`
+
+Configure the annotation drawing tool.
+
+```bash
+sr tool pen                                      # switch to pen
+sr tool arrow                                    # switch to arrow
+sr tool rect                                     # switch to rectangle
+sr tool ellipse                                  # switch to ellipse
+sr tool text                                     # switch to text
+sr tool highlighter                              # switch to highlighter
+
+sr tool color red                                # set color
+sr tool color "#FF5500"                          # hex color
+
+sr tool width 3                                  # set line width
+```
+
+---
+
+### `shell`
+
+Execute a shell command via the app process and return its output.
+
+```bash
+sr shell "echo hello"
+sr shell "ls -la /tmp"
+sr shell --timeout 10 "npm test"
+sr shell --json "git status"
+```
+
+---
+
+## MCP Server Tools
+
+When used as an MCP server (e.g. with Claude Desktop or Cursor), all capabilities are exposed as MCP tools:
+
+### Screen & Vision
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_status` | Check app status |
+| `screen_recorder_screen_info` | Get display info |
+| `screen_recorder_list_windows` | List windows with bounds |
+| `screen_recorder_focused_window` | Get frontmost window |
+| `screen_recorder_detect_elements` | Vision OCR element detection |
+| `screen_recorder_screenshot` | Capture screenshot (with scale/quality/max_bytes) |
+
+### Recording
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_start` | Start recording |
+| `screen_recorder_stop` | Stop recording |
+| `screen_recorder_pause` | Pause recording |
+| `screen_recorder_resume` | Resume recording |
+
+### Annotations
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_annotate` | Add annotations (arrow/rect/ellipse/line/text) |
+| `screen_recorder_annotate_activate` | Enter annotation mode |
+| `screen_recorder_annotate_deactivate` | Exit annotation mode |
+| `screen_recorder_annotate_list` | List current annotations |
+| `screen_recorder_annotate_undo` | Undo last annotation |
+| `screen_recorder_annotate_redo` | Redo annotation |
+| `screen_recorder_annotate_clear` | Clear all annotations |
+| `screen_recorder_tool` | Set drawing tool |
+| `screen_recorder_tool_color` | Set tool color |
+| `screen_recorder_tool_width` | Set tool width |
+
+### Sessions
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_session_new` | Create session |
+| `screen_recorder_session_list` | List sessions |
+| `screen_recorder_session_switch` | Switch session |
+| `screen_recorder_session_delete` | Delete session |
+| `screen_recorder_session_save` | Save session |
+| `screen_recorder_session_export` | Export session |
+
+### Computer Control (Input)
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_click` | Left click at coordinates |
+| `screen_recorder_right_click` | Right click |
+| `screen_recorder_double_click` | Double click |
+| `screen_recorder_drag` | Click-drag from→to |
+| `screen_recorder_scroll` | Scroll at coordinates |
+| `screen_recorder_move_mouse` | Move cursor |
+| `screen_recorder_type_text` | Type text |
+| `screen_recorder_press_key` | Press a key |
+| `screen_recorder_hotkey` | Keyboard shortcut |
+| `screen_recorder_click_element` | Click by text (OCR + AX fallback) |
+
+### App Control
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_launch_app` | Launch app (background by default, optional activate) |
+| `screen_recorder_activate_app` | Bring app to front (waits for focus) |
+| `screen_recorder_list_apps` | List running apps |
+
+### Browser Automation
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_browser_status` | Check DevTools endpoint reachability |
+| `screen_recorder_browser_launch` | Launch Chromium browser with remote debugging |
+| `screen_recorder_browser_launch_and_open` | Ensure browser automation is ready, then open URL |
+| `screen_recorder_browser_tabs` | List browser tabs |
+| `screen_recorder_browser_open_tab` | Open a new browser tab |
+| `screen_recorder_browser_activate_tab` | Activate a browser tab |
+| `screen_recorder_browser_navigate` | Navigate a tab to a URL |
+| `screen_recorder_browser_eval` | Evaluate JavaScript in a tab |
+| `screen_recorder_browser_click` | Click a DOM element by CSS selector |
+| `screen_recorder_browser_type` | Set a DOM element value by CSS selector |
+| `screen_recorder_browser_press_key` | Dispatch a key to the page's active element |
+| `screen_recorder_browser_screenshot` | Capture a browser-rendered screenshot |
+
+### Accessibility API (AX)
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_check_accessibility` | Check AX permission |
+| `screen_recorder_ax_tree` | Get UI element tree |
+| `screen_recorder_ax_find` | Find elements by title or role |
+| `screen_recorder_ax_press` | Press/click element by title |
+| `screen_recorder_ax_set_value` | Set value of a text field, checkbox, etc. |
+| `screen_recorder_ax_focused` | Get currently focused element |
+| `screen_recorder_ax_actionable` | List all actionable elements with coordinates |
+
+### Safety & Shell
+| Tool | Description |
+|------|-------------|
+| `screen_recorder_safety_settings` | Get current safety gate settings |
+| `screen_recorder_safety_configure` | Configure safety constraints |
+| `screen_recorder_run_command` | Execute shell command |
+| `screen_recorder_usage` | Get API usage stats |
+
+---
+
+## Accessibility Permission
+
+Input synthesis and AX API features require Accessibility permission.
+
+1. Open **System Settings → Privacy & Security → Accessibility**
+2. Enable **ScreenRecorder**
+
+Verify from the CLI:
+```bash
+sr input check-access
+sr ax focused     # will error with a helpful message if not granted
+```
+
+---
+
+## Safety Gate
+
+All computer control actions pass through a configurable safety gate that:
+- Logs every synthesized input event
+- Can enforce rate limits
+- Can require explicit confirmation for destructive actions
+- Can enforce an execution mode so automation does not steal focus or your active app
+
+Configure via:
+```bash
+# Via CLI
+sr safety status
+sr safety mode background_safe
+sr safety mode foreground
+
+# Via MCP
+screen_recorder_safety_configure
+screen_recorder_safety_settings
+```
+
+Execution modes:
+- `foreground`: classic automation behavior, including focus changes and frontmost input.
+- `background_safe`: default. Blocks focus-stealing actions, real cursor movement, and frontmost/global input. Use targeted app/PID input instead.
+- `background_strict`: blocks everything from `background_safe` plus window moves/resizes/minimize/restore and disruptive app lifecycle actions.
+
+---
+
+## MCP Server Configuration
+
+Add to your MCP client config (e.g. `~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "screenrecorder": {
+      "command": "/Applications/ScreenRecorder.app/Contents/MacOS/sr",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The app must be running before the MCP connection is established.
