@@ -8,6 +8,7 @@ fi
 
 SIGNING_IDENTITY="${SIGNING_IDENTITY:?Set SIGNING_IDENTITY in .env}"
 TEAM_ID="${APPLE_TEAM_ID:?Set APPLE_TEAM_ID in .env}"
+BUNDLE_ID="com.codeitlikemiley.screenrecorder"
 APP_DIR=".build/ScreenRecorder.app"
 
 # Kill existing instance to prevent -600 error on relaunch
@@ -65,14 +66,18 @@ for bundle in "$BUNDLES_DIR"/*.bundle; do
     fi
 done
 
-# Sign nested CLI binaries first (no app-specific entitlements)
+# Sign nested CLI binaries first (no app-specific entitlements).
+# --identifier must be explicitly set — without it codesign uses the filename ("sr")
+# as the bundle ID, causing macOS TCC to track them separately from the desktop app.
 echo "🔏 Signing with developer certificate (hardened runtime)..."
 for cli_bin in "$MACOS_DIR/sr" "$MACOS_DIR/sr-mcp"; do
     if [ -f "$cli_bin" ]; then
+        BIN_NAME=$(basename "$cli_bin")
         codesign --force --sign "$SIGNING_IDENTITY" \
           --options runtime \
+          --identifier "${BUNDLE_ID}.${BIN_NAME}" \
           "$cli_bin" 2>&1
-        echo "   ✅ Signed $(basename "$cli_bin")"
+        echo "   ✅ Signed ${BIN_NAME} (id: ${BUNDLE_ID}.${BIN_NAME})"
     fi
 done
 
@@ -87,8 +92,9 @@ codesign --force --sign "$SIGNING_IDENTITY" \
 echo "📋 Registering execution policy..."
 spctl --add --label "ScreenRecorder" "$APP_DIR" 2>/dev/null || true
 
-# Note: Accessibility permissions are tied to CDHash. If permissions stop working
-# after rebuild, the user must re-add the app in System Settings → Accessibility.
+# Note: Accessibility permissions are tied to CDHash (code signature hash).
+# After a local rebuild the hash changes and macOS TCC will prompt again.
+# This is a dev-only inconvenience; release builds are approved once per install.
 
 # Write license server URL into shared UserDefaults (for GUI app)
 # In .env: SR_LICENSE_SERVER=http://localhost:3000

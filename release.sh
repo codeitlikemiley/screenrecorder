@@ -36,6 +36,7 @@ pkill -f "${APP_NAME}" 2>/dev/null || true
 xcodebuild -scheme "${APP_NAME}" -configuration Release \
   -destination 'platform=macOS' \
   -derivedDataPath .build/xcode-release \
+  -onlyUsePackageVersionsFromResolvedFile \
   DEVELOPMENT_TEAM="${APPLE_TEAM_ID}" \
   CODE_SIGN_IDENTITY="${SIGNING_IDENTITY}" \
   CODE_SIGN_STYLE=Manual \
@@ -94,17 +95,18 @@ fi
 # ─── Step 3: Code Sign ─────────────────────────────────────
 echo "🔏 Step 3/7: Signing with Developer ID (hardened runtime)..."
 
-# Sign nested CLI binaries first (no app-specific entitlements)
-# Using --deep would apply screen-capture/camera/mic entitlements to CLI
-# binaries, which confuses macOS TCC and prevents the app from
-# auto-registering in System Settings permission panes.
+# Sign nested CLI binaries first (no app-specific entitlements).
+# --identifier must be explicitly set — without it codesign uses the filename ("sr")
+# as the bundle ID, causing macOS TCC to track them separately from the desktop app.
 for cli_bin in "${MACOS_DIR}/sr" "${MACOS_DIR}/sr-mcp"; do
     if [ -f "$cli_bin" ]; then
+        BIN_NAME=$(basename "$cli_bin")
         codesign --force --sign "${SIGNING_IDENTITY}" \
           --options runtime \
           --timestamp \
+          --identifier "${BUNDLE_ID}.${BIN_NAME}" \
           "$cli_bin" 2>&1
-        echo "   ✅ Signed $(basename "$cli_bin")"
+        echo "   ✅ Signed ${BIN_NAME} (id: ${BUNDLE_ID}.${BIN_NAME})"
     fi
 done
 
@@ -125,12 +127,48 @@ echo "📤 Step 4/7: Submitting for notarization..."
 ZIP_PATH=".build/${APP_NAME}-notarize.zip"
 ditto -c -k --keepParent "${APP_DIR}" "${ZIP_PATH}"
 
-xcrun notarytool submit "${ZIP_PATH}" \
+# Submit and capture the submission ID (no --wait to avoid SIGTERM on long runs)
+SUBMIT_OUTPUT=$(xcrun notarytool submit "${ZIP_PATH}" \
+  --apple-id "${APPLE_ID}" \
+  --team-id "${APPLE_TEAM_ID}" \
+  --password "${APP_PASSWORD}" 2>&1)
+echo "${SUBMIT_OUTPUT}"
+
+SUBMISSION_ID=$(echo "${SUBMIT_OUTPUT}" | grep -E '^\s*id:' | head -1 | awk '{print $2}')
+if [ -z "${SUBMISSION_ID}" ]; then
+    echo "❌ Failed to get submission ID from notarytool output"
+    exit 1
+fi
+echo "   ⏳ Waiting for notarization (ID: ${SUBMISSION_ID})..."
+
+# Poll until accepted/rejected (up to 30 min)
+xcrun notarytool wait "${SUBMISSION_ID}" \
   --apple-id "${APPLE_ID}" \
   --team-id "${APPLE_TEAM_ID}" \
   --password "${APP_PASSWORD}" \
-  --wait
+  --timeout 1800 || {
+    echo "   ⚠️  Timeout or error — fetching notarization log..."
+    xcrun notarytool log "${SUBMISSION_ID}" \
+      --apple-id "${APPLE_ID}" \
+      --team-id "${APPLE_TEAM_ID}" \
+      --password "${APP_PASSWORD}" 2>&1 || true
+    exit 1
+}
 
+# Verify final status
+NOTARY_INFO=$(xcrun notarytool info "${SUBMISSION_ID}" \
+  --apple-id "${APPLE_ID}" \
+  --team-id "${APPLE_TEAM_ID}" \
+  --password "${APP_PASSWORD}" 2>&1)
+echo "${NOTARY_INFO}"
+if ! echo "${NOTARY_INFO}" | grep -q 'status: Accepted'; then
+    echo "❌ Notarization failed — fetching log..."
+    xcrun notarytool log "${SUBMISSION_ID}" \
+      --apple-id "${APPLE_ID}" \
+      --team-id "${APPLE_TEAM_ID}" \
+      --password "${APP_PASSWORD}" 2>&1 || true
+    exit 1
+fi
 echo "   ✅ Notarization approved"
 
 # ─── Step 5: Staple ────────────────────────────────────────
