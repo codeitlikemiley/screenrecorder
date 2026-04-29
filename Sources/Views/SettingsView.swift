@@ -207,6 +207,20 @@ struct SettingsView: View {
                         .pickerStyle(.radioGroup)
                     }
 
+                    // Share-Optimized Export
+                    settingsSection(title: "Sharing", icon: "square.and.arrow.up") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Toggle("Share-Optimized Export", isOn: $appState.isShareOptimizedExportEnabled)
+                                .font(.system(size: 13))
+
+                            Text("After each recording, automatically export a Facebook-compatible MP4 (H.264 + AAC) alongside the original. Fixes the known Facebook audio bug where MOV/HEVC recordings lose sound after upload.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .lineLimit(nil)
+                        }
+                    }
+
                     // Save Location
                     settingsSection(title: "Save Location", icon: "folder") {
                         HStack {

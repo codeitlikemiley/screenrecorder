@@ -282,6 +282,32 @@ actor SafariBrowserController: BrowserController {
         return ["ok": true, "tab": tab]
     }
 
+    func installShield(port: Int, params: [String: Any]) async throws -> [String: Any] {
+        let message = params["message"] as? String ?? "Agent controlling this tab"
+        let messageLiteral = try jsStringLiteral(message)
+        let result = try await evaluate(
+            port: port,
+            params: params.merging(["expression": browserShieldInstallScript(messageLiteral: messageLiteral)]) { _, new in new }
+        )
+        return ["ok": true, "tab": result["tab"] as? [String: Any] ?? [:], "shield": result["result"] as? [String: Any] ?? [:]]
+    }
+
+    func removeShield(port: Int, params: [String: Any]) async throws -> [String: Any] {
+        let result = try await evaluate(
+            port: port,
+            params: params.merging(["expression": browserShieldRemoveScript()]) { _, new in new }
+        )
+        return ["ok": true, "tab": result["tab"] as? [String: Any] ?? [:], "shield": result["result"] as? [String: Any] ?? [:]]
+    }
+
+    func shieldStatus(port: Int, params: [String: Any]) async throws -> [String: Any] {
+        let result = try await evaluate(
+            port: port,
+            params: params.merging(["expression": browserShieldStatusScript()]) { _, new in new }
+        )
+        return ["ok": true, "tab": result["tab"] as? [String: Any] ?? [:], "shield": result["result"] as? [String: Any] ?? [:]]
+    }
+
     private func ensureServerRunning(port: Int) async throws {
         let client = WebDriverClient(port: port)
         if (try? await client.status()) != nil {

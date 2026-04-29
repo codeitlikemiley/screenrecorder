@@ -148,6 +148,14 @@ class AgentRouter {
         case "browser.screenshot":
             return try await browserScreenshot(params: params)
 
+        // Scoped interaction shield
+        case "shield.status":
+            return await shieldStatus()
+        case "shield.enable":
+            return try await shieldEnable(params: params)
+        case "shield.disable":
+            return try await shieldDisable(params: params)
+
         // Shell command execution
         case "shell.exec":
             return try execShellCommand(params: params)
@@ -1232,6 +1240,54 @@ class AgentRouter {
         return nil
     }
 
+    private func resolveTargetWindowId(params: [String: Any]?) -> Int? {
+        if let windowId = params?["window_id"] as? Int {
+            return windowId
+        }
+        if let windowRefId = params?["window_ref_id"] as? Int {
+            return windowRefId
+        }
+        if let window = params?["window"] as? String {
+            return findWindowId(appName: window)
+        }
+        if let windowRef = params?["window_ref"] as? String {
+            if let direct = Int(windowRef) {
+                return direct
+            }
+            return findWindowId(appName: windowRef)
+        }
+        if let app = params?["app"] as? String {
+            return findWindowId(appName: app)
+        }
+        if let targetApp = params?["target_app"] as? String {
+            return findWindowId(appName: targetApp)
+        }
+        return nil
+    }
+
+    private func shouldAutoActivateNativeShield(params: [String: Any]?) -> Bool {
+        resolveTargetWindowId(params: params) != nil || resolveTargetPid(params: params) != 0
+    }
+
+    private func maybeActivateNativeShield(params: [String: Any]?, message: String = "Agent controlling this window") {
+        guard shouldAutoActivateNativeShield(params: params) else { return }
+        let windowId = resolveTargetWindowId(params: params)
+        let pid = resolveTargetPid(params: params)
+        let appName = resolveTargetAppName(params: params)
+
+        Task {
+            _ = try? await BrowserAutomationManager.shared.disableShield(params: nil)
+            await MainActor.run {
+                _ = InteractionShieldManager.shared.activateNative(
+                    windowId: windowId,
+                    pid: pid == 0 ? nil : Int(pid),
+                    appName: appName,
+                    message: message
+                )
+            }
+        }
+    }
+
     private func inputClick(params: [String: Any]?) throws -> [String: Any] {
         guard InputSynthesizer.checkAccessibilityPermission() else {
             return ["ok": false, "error": "Accessibility permission not granted. Open System Settings → Privacy & Security → Accessibility and add Screen Recorder."]
@@ -1249,6 +1305,7 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: characteristics
         ) { return blocked }
+        maybeActivateNativeShield(params: params)
         inputSynthesizer.click(at: point, clickCount: clickCount, targetPid: targetPid)
         return ["ok": true, "clicked_at": ["x": point.x, "y": point.y], "click_count": clickCount, "target_pid": Int(targetPid)]
     }
@@ -1269,6 +1326,7 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: characteristics
         ) { return blocked }
+        maybeActivateNativeShield(params: params)
         inputSynthesizer.rightClick(at: point, targetPid: targetPid)
         return ["ok": true, "right_clicked_at": ["x": point.x, "y": point.y], "target_pid": Int(targetPid)]
     }
@@ -1289,6 +1347,7 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: characteristics
         ) { return blocked }
+        maybeActivateNativeShield(params: params)
         inputSynthesizer.doubleClick(at: point, targetPid: targetPid)
         return ["ok": true, "double_clicked_at": ["x": point.x, "y": point.y], "target_pid": Int(targetPid)]
     }
@@ -1309,6 +1368,7 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: characteristics
         ) { return blocked }
+        maybeActivateNativeShield(params: params)
         inputSynthesizer.middleClick(at: point, targetPid: targetPid)
         return ["ok": true, "middle_clicked_at": ["x": point.x, "y": point.y], "target_pid": Int(targetPid)]
     }
@@ -1335,6 +1395,7 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: [.usesFrontmostInput, .movesRealCursor]
         ) { return blocked }
+        maybeActivateNativeShield(params: params)
         inputSynthesizer.drag(from: from, to: to, duration: duration, steps: steps)
         return ["ok": true, "dragged_from": ["x": from.x, "y": from.y], "dragged_to": ["x": to.x, "y": to.y]]
     }
@@ -1360,6 +1421,7 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: characteristics
         ) { return blocked }
+        maybeActivateNativeShield(params: params)
         inputSynthesizer.scroll(at: point, deltaX: deltaX, deltaY: deltaY, targetPid: targetPid)
         return ["ok": true, "scrolled_at": ["x": point.x, "y": point.y], "delta_x": deltaX, "delta_y": deltaY, "target_pid": Int(targetPid)]
     }
@@ -1397,6 +1459,7 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: characteristics
         ) { return blocked }
+        maybeActivateNativeShield(params: params)
         inputSynthesizer.typeText(text, intervalMs: intervalMs, targetPid: targetPid)
         return ["ok": true, "typed": text, "char_count": text.count, "target_pid": Int(targetPid)]
     }
@@ -1430,6 +1493,7 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: characteristics
         ) { return blocked }
+        maybeActivateNativeShield(params: params)
         guard inputSynthesizer.pressNamedKey(key, modifiers: flags, targetPid: targetPid) else {
             throw AgentError.invalidParams("Unknown key name: '\(key)'. Valid: return, tab, space, delete, escape, up, down, left, right, home, end, pageup, pagedown, f1-f12")
         }
@@ -1450,6 +1514,7 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: characteristics
         ) { return blocked }
+        maybeActivateNativeShield(params: params)
         guard inputSynthesizer.parseAndExecuteHotkey(hotkeyString, targetPid: targetPid) else {
             throw AgentError.invalidParams("Could not parse hotkey: '\(hotkeyString)'. Format: 'cmd+c', 'ctrl+shift+a'")
         }
@@ -1519,6 +1584,7 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: characteristics
         ) { return blocked }
+        maybeActivateNativeShield(params: params)
         inputSynthesizer.click(at: CGPoint(x: cx, y: cy), clickCount: clickCount, targetPid: targetPid)
 
         return [
@@ -1578,6 +1644,7 @@ class AgentRouter {
                 targetApp: resolveTargetAppName(params: params),
                 characteristics: characteristics
             ) { return blocked }
+            maybeActivateNativeShield(params: params)
             // Focus via AX first
             AccessibilityBridge.setFocus(on: el)
             // Give focus a moment to settle
@@ -1603,6 +1670,7 @@ class AgentRouter {
                 targetApp: resolveTargetAppName(params: params),
                 characteristics: characteristics
             ) { return blocked }
+            maybeActivateNativeShield(params: params)
             inputSynthesizer.click(at: CGPoint(x: cx, y: cy), targetPid: targetPid)
             try await Task.sleep(nanoseconds: 150_000_000)
             inputSynthesizer.typeText(text, intervalMs: intervalMs, targetPid: targetPid)
@@ -1720,6 +1788,47 @@ class AgentRouter {
         try await BrowserAutomationManager.shared.screenshot(params: params)
     }
 
+    // MARK: - Scoped Shield
+
+    private func shieldStatus() async -> [String: Any] {
+        await MainActor.run {
+            InteractionShieldManager.shared.status()
+        }
+    }
+
+    private func shieldEnable(params: [String: Any]?) async throws -> [String: Any] {
+        if params?["backend"] != nil || params?["tab_id"] != nil || params?["title_contains"] != nil || params?["url_contains"] != nil {
+            return try await BrowserAutomationManager.shared.enableShield(params: params)
+        }
+
+        return await MainActor.run {
+            InteractionShieldManager.shared.activateNative(
+                windowId: resolveTargetWindowId(params: params),
+                pid: {
+                    let pid = resolveTargetPid(params: params)
+                    return pid == 0 ? nil : Int(pid)
+                }(),
+                appName: resolveTargetAppName(params: params),
+                message: params?["message"] as? String ?? "Agent controlling this window"
+            )
+        }
+    }
+
+    private func shieldDisable(params: [String: Any]?) async throws -> [String: Any] {
+        let scope = (params?["scope"] as? String ?? "all").lowercased()
+        var result: [String: Any] = ["ok": true]
+
+        if scope == "all" || scope == "browser" {
+            result["browser"] = try await BrowserAutomationManager.shared.disableShield(params: params)
+        }
+        if scope == "all" || scope == "native" {
+            result["native"] = await MainActor.run {
+                InteractionShieldManager.shared.dismissNative(reason: "disabled")
+            }
+        }
+        return result
+    }
+
     // MARK: - Shell Command Execution
 
     private func execShellCommand(params: [String: Any]?) throws -> [String: Any] {
@@ -1832,6 +1941,9 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: characteristics
         ) { return blocked }
+        if explicitTarget {
+            maybeActivateNativeShield(params: params)
+        }
 
         guard let element = AccessibilityBridge.findElement(in: root, withTitle: title) else {
             return ["ok": false, "error": "Element '\(title)' not found"]
@@ -1862,6 +1974,9 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: characteristics
         ) { return blocked }
+        if explicitTarget {
+            maybeActivateNativeShield(params: params)
+        }
 
         guard let element = AccessibilityBridge.findElement(in: root, withTitle: title) else {
             return ["ok": false, "error": "Element '\(title)' not found"]
@@ -2054,6 +2169,7 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: [.mutatesWindows]
         ) { return blocked }
+        maybeActivateNativeShield(params: params)
         let axApp = try targetAXApp(params: params)
         guard let window = firstWindow(of: axApp) else {
             return ["ok": false, "error": "No window found"]
@@ -2073,6 +2189,7 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: [.mutatesWindows]
         ) { return blocked }
+        maybeActivateNativeShield(params: params)
         let axApp = try targetAXApp(params: params)
         guard let window = firstWindow(of: axApp) else {
             return ["ok": false, "error": "No window found"]
@@ -2089,6 +2206,7 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: [.mutatesWindows]
         ) { return blocked }
+        maybeActivateNativeShield(params: params)
         let axApp = try targetAXApp(params: params)
         guard let window = firstWindow(of: axApp) else {
             return ["ok": false, "error": "No window found"]
@@ -2103,6 +2221,7 @@ class AgentRouter {
             targetApp: resolveTargetAppName(params: params),
             characteristics: [.mutatesWindows]
         ) { return blocked }
+        maybeActivateNativeShield(params: params)
         let axApp = try targetAXApp(params: params)
         guard let window = firstWindow(of: axApp) else {
             return ["ok": false, "error": "No window found"]

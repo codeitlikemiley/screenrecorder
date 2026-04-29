@@ -115,25 +115,25 @@ class PermissionManager {
     }
 
     /// Called when a feature needs accessibility (e.g. keystroke overlay toggle).
-    /// Shows the system prompt dialog if not trusted.
+    /// Opens the Accessibility settings pane once per launch instead of repeatedly
+    /// invoking the system trust prompt.
     func requestAccessibilityPermission() -> Bool {
         if checkAccessibilityPermission() { return true }
         guard !didPromptForAccessibilityThisLaunch else { return false }
 
         didPromptForAccessibilityThisLaunch = true
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-        return checkAccessibilityPermission()
+        openSystemSettings(pane: "Privacy_Accessibility")
+        return false
     }
 
-    /// Called by the Settings Grant button. Shows the system accessibility prompt.
+    /// Called by the Settings Grant button. Opens the Accessibility settings pane.
     func openAccessibilitySettings() {
         didPromptForAccessibilityThisLaunch = true
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
+        openSystemSettings(pane: "Privacy_Accessibility")
     }
 
-    /// Avoid re-prompt loops when macOS still requires a relaunch after the user enabled access.
+    /// Avoid re-prompt loops when macOS still requires a relaunch after the user enabled
+    /// access, or when the user still needs to toggle the app on in System Settings.
     func showAccessibilityRestartAlertIfNeeded() {
         guard didPromptForAccessibilityThisLaunch,
               !AXIsProcessTrusted(),
@@ -142,18 +142,24 @@ class PermissionManager {
         didShowAccessibilityRestartAlert = true
 
         let alert = NSAlert()
-        alert.messageText = "Accessibility Permission Pending"
+        alert.messageText = "Accessibility Required"
         alert.informativeText = """
-        If you just enabled Accessibility for Screen Recorder, macOS may not apply it until the app relaunches.
+        Screen Recorder needs Accessibility access for the keystroke overlay.
 
-        Restart the app, then try enabling the keystroke overlay again. If it still fails after relaunch, confirm Screen Recorder is enabled in System Settings → Privacy & Security → Accessibility.
+        If Screen Recorder already appears enabled in System Settings → Privacy & Security → Accessibility, macOS may not apply it until the app relaunches.
         """
         alert.alertStyle = .informational
+        alert.addButton(withTitle: "Open Settings")
         alert.addButton(withTitle: "Restart Now")
         alert.addButton(withTitle: "Later")
 
-        if alert.runModal() == .alertFirstButtonReturn {
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            openAccessibilitySettings()
+        case .alertSecondButtonReturn:
             restartApp()
+        default:
+            break
         }
     }
 

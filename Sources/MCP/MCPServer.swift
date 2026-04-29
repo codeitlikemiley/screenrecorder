@@ -448,6 +448,27 @@ final class MCPServer {
                 if let urlContains = arguments["url_contains"] { rpcParams["url_contains"] = urlContains }
                 result = try await callRPC(method: "browser.screenshot", params: rpcParams)
 
+            case "screen_recorder_shield_status":
+                result = try await callRPC(method: "shield.status")
+
+            case "screen_recorder_shield_enable":
+                var rpcParams: [String: Any] = [:]
+                if let backend = arguments["backend"] { rpcParams["backend"] = backend }
+                if let port = arguments["port"] { rpcParams["port"] = port }
+                if let tabID = arguments["tab_id"] { rpcParams["tab_id"] = tabID }
+                if let titleContains = arguments["title_contains"] { rpcParams["title_contains"] = titleContains }
+                if let urlContains = arguments["url_contains"] { rpcParams["url_contains"] = urlContains }
+                if let windowId = arguments["window_id"] { rpcParams["window_id"] = windowId }
+                if let app = arguments["app"] { rpcParams["app"] = app }
+                if let pid = arguments["pid"] { rpcParams["pid"] = pid }
+                if let message = arguments["message"] { rpcParams["message"] = message }
+                result = try await callRPC(method: "shield.enable", params: rpcParams)
+
+            case "screen_recorder_shield_disable":
+                var rpcParams: [String: Any] = [:]
+                if let scope = arguments["scope"] { rpcParams["scope"] = scope }
+                result = try await callRPC(method: "shield.disable", params: rpcParams)
+
             case "screen_recorder_run_command":
                 var rpcParams: [String: Any] = [:]
                 if let cmd = arguments["command"] { rpcParams["command"] = cmd }
@@ -1239,6 +1260,33 @@ final class MCPServer {
                     "tab_id": ["type": "string", "description": "Exact browser tab ID"],
                     "title_contains": ["type": "string", "description": "Find a tab whose title contains this text"],
                     "url_contains": ["type": "string", "description": "Find a tab whose URL contains this text"],
+                ]
+            ),
+            toolDef(
+                name: "screen_recorder_shield_status",
+                description: "Return the current scoped interaction shield state for browser tabs and native app windows.",
+                properties: [:]
+            ),
+            toolDef(
+                name: "screen_recorder_shield_enable",
+                description: "Manually enable the scoped interaction shield for a browser tab or native app window.",
+                properties: [
+                    "backend": ["type": "string", "description": "Browser backend: 'chromium' or 'safari'."],
+                    "port": ["type": "integer", "description": "Browser automation port (default: 9222)."],
+                    "tab_id": ["type": "string", "description": "Exact browser tab ID."],
+                    "title_contains": ["type": "string", "description": "Find a browser tab whose title contains this text."],
+                    "url_contains": ["type": "string", "description": "Find a browser tab whose URL contains this text."],
+                    "window_id": ["type": "integer", "description": "Native window ID."],
+                    "app": ["type": "string", "description": "Native target app name."],
+                    "pid": ["type": "integer", "description": "Native target pid."],
+                    "message": ["type": "string", "description": "Optional shield message override."],
+                ]
+            ),
+            toolDef(
+                name: "screen_recorder_shield_disable",
+                description: "Disable the scoped interaction shield. Scope may be 'all', 'browser', or 'native'.",
+                properties: [
+                    "scope": ["type": "string", "description": "Disable scope: all, browser, or native."],
                 ]
             ),
             toolDef(

@@ -84,6 +84,19 @@ class RecordingCoordinator: ObservableObject {
         appState.hasAccessibilityPermission = PermissionManager.shared.checkAccessibilityPermission()
         appState.hasScreenPermission = true
 
+        // Keep the persisted keystroke toggle honest at launch: if the user left
+        // it enabled, quietly restore monitoring only when Accessibility is
+        // already trusted. Otherwise clear the toggle instead of pretending the
+        // overlay is active.
+        if appState.isKeystrokeOverlayEnabled {
+            if appState.hasAccessibilityPermission {
+                keystrokeMonitor.startMonitoring()
+            }
+            if !keystrokeMonitor.isMonitoring {
+                appState.isKeystrokeOverlayEnabled = false
+            }
+        }
+
         // Start agent server for programmatic control (idempotent — safe if already started)
         startAgentServer()
 
@@ -299,8 +312,12 @@ class RecordingCoordinator: ObservableObject {
         cameraManager.onSampleBuffer = nil
         overlayManager.destroyCameraWindow()
 
-        // 4. Stop keystroke monitor + mouse monitor
-        keystrokeMonitor.stopMonitoring()
+        // 4. Stop transient monitors. Keep the keystroke monitor alive if the
+        // feature is still enabled so the menu state matches reality after the
+        // recording ends.
+        if !appState.isKeystrokeOverlayEnabled {
+            keystrokeMonitor.stopMonitoring()
+        }
         mouseMonitor.stopMonitoring()
 
         // 4b. Deactivate annotation mode (keep strokes visible for review)
@@ -339,6 +356,20 @@ class RecordingCoordinator: ObservableObject {
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             } catch {
                 print("❌ Failed to save recording: \(error)")
+            }
+
+            // Share-optimized export (if enabled)
+            if appState.isShareOptimizedExportEnabled {
+                let shareURL = ShareOptimizedExporter.shareOutputURL(for: url)
+                print("📤 Share-optimized export enabled — exporting to \(shareURL.lastPathComponent)...")
+                do {
+                    let exportedURL = try await ShareOptimizedExporter.export(sourceURL: url, outputURL: shareURL)
+                    print("✅ Share-optimized file ready: \(exportedURL.path)")
+                    // Open the share-optimized file in Finder instead of the original
+                    NSWorkspace.shared.activateFileViewerSelecting([exportedURL])
+                } catch {
+                    print("⚠️ Share-optimized export failed: \(error.localizedDescription)")
+                }
             }
         }
 
@@ -400,15 +431,27 @@ class RecordingCoordinator: ObservableObject {
 
         if keystrokeMonitor.isMonitoring {
             appState.hasAccessibilityPermission = true
+            appState.isKeystrokeOverlayEnabled = true
             print("✅ Keystroke monitoring started successfully")
             return
         }
 
-        // Tap failed — request permission once per launch, then guide the user to restart
+        appState.isKeystrokeOverlayEnabled = false
+
+        // If the monitor still can't start after the app already appears trusted,
+        // do not prompt again. Repeated prompts are noisy and don't fix a tap that
+        // is failing for some other reason.
+        if trusted {
+            appState.hasAccessibilityPermission = true
+            print("❌ Keystroke overlay disabled — monitoring failed to start even though Accessibility appears granted")
+            return
+        }
+
+        // Tap failed and the app is not trusted yet — request permission once per
+        // launch, then guide the user to restart if macOS hasn't applied it.
         print("⚠️ CGEvent tap failed, requesting Accessibility permission if needed...")
         let granted = PermissionManager.shared.requestAccessibilityPermission()
         appState.hasAccessibilityPermission = granted
-        appState.isKeystrokeOverlayEnabled = false
         if !granted {
             PermissionManager.shared.showAccessibilityRestartAlertIfNeeded()
         }

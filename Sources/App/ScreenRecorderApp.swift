@@ -128,19 +128,8 @@ struct MenuBarView: View {
             Toggle("⌨️ Keystroke Overlay  ⌘⇧K", isOn: Binding(
                 get: { appState.isKeystrokeOverlayEnabled },
                 set: { newValue in
-                    if newValue {
-                        let granted = PermissionManager.shared.requestAccessibilityPermission()
-                        appState.hasAccessibilityPermission = granted
-                        appState.isKeystrokeOverlayEnabled = granted
-                        if granted {
-                            coordinator.toggleKeystrokeMonitor()
-                        } else {
-                            PermissionManager.shared.showAccessibilityRestartAlertIfNeeded()
-                        }
-                    } else {
-                        appState.isKeystrokeOverlayEnabled = false
-                        coordinator.toggleKeystrokeMonitor()
-                    }
+                    appState.isKeystrokeOverlayEnabled = newValue
+                    coordinator.toggleKeystrokeMonitor()
                 }
             ))
             .disabled(!isLicensed)

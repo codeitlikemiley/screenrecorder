@@ -14,6 +14,9 @@ protocol BrowserController {
     func pressKey(port: Int, params: [String: Any]) async throws -> [String: Any]
     func screenshot(port: Int, params: [String: Any]) async throws -> [String: Any]
     func activateTab(port: Int, params: [String: Any]) async throws -> [String: Any]
+    func installShield(port: Int, params: [String: Any]) async throws -> [String: Any]
+    func removeShield(port: Int, params: [String: Any]) async throws -> [String: Any]
+    func shieldStatus(port: Int, params: [String: Any]) async throws -> [String: Any]
 }
 
 enum BrowserAutomationError: LocalizedError {
@@ -49,6 +52,166 @@ enum BrowserAutomationError: LocalizedError {
             return "Invalid browser argument: \(message)"
         }
     }
+}
+
+func browserShieldInstallScript(messageLiteral: String) -> String {
+    """
+    (() => {
+      const key = "__screenRecorderAgentShield";
+      const shieldId = "screenrecorder-agent-shield";
+      const styleId = "screenrecorder-agent-shield-style";
+      const message = \(messageLiteral);
+      const state = window[key] || {};
+
+      const ensureStyle = () => {
+        if (document.getElementById(styleId)) return;
+        const style = document.createElement("style");
+        style.id = styleId;
+        style.textContent = `
+          #${shieldId} {
+            position: fixed;
+            inset: 0;
+            z-index: 2147483647;
+            background: rgba(5, 8, 16, 0.18);
+            backdrop-filter: blur(1.5px);
+            pointer-events: auto;
+            cursor: not-allowed;
+            display: flex;
+            align-items: flex-end;
+            justify-content: flex-end;
+            box-sizing: border-box;
+          }
+          #${shieldId} * { pointer-events: none; }
+          #${shieldId} .sr-pill {
+            margin: 16px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: rgba(9, 12, 20, 0.82);
+            color: #ffffff;
+            border: 1px solid rgba(104, 176, 255, 0.55);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+            font: 500 12px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+            letter-spacing: 0.01em;
+          }
+          #${shieldId} .sr-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            background: #ff6257;
+            vertical-align: middle;
+          }
+        `;
+        (document.head || document.documentElement).appendChild(style);
+      };
+
+      const ensureRoot = () => {
+        ensureStyle();
+        const host = document.body || document.documentElement;
+        if (!host) return;
+        let root = document.getElementById(shieldId);
+        if (!root) {
+          root = document.createElement("div");
+          root.id = shieldId;
+          root.setAttribute("tabindex", "0");
+          root.innerHTML = `<div class="sr-pill"><span class="sr-dot"></span><span class="sr-message"></span></div>`;
+          root.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); }, true);
+          root.addEventListener("mousedown", event => { event.preventDefault(); event.stopPropagation(); }, true);
+          root.addEventListener("mouseup", event => { event.preventDefault(); event.stopPropagation(); }, true);
+          root.addEventListener("pointerdown", event => { event.preventDefault(); event.stopPropagation(); }, true);
+          root.addEventListener("pointerup", event => { event.preventDefault(); event.stopPropagation(); }, true);
+          root.addEventListener("wheel", event => { event.preventDefault(); event.stopPropagation(); }, { capture: true, passive: false });
+          host.appendChild(root);
+        }
+        const messageNode = root.querySelector(".sr-message");
+        if (messageNode) messageNode.textContent = message;
+        try { root.focus({ preventScroll: true }); } catch (_) {}
+      };
+
+      if (!state.keyHandler) {
+        state.keyHandler = (event) => {
+          if (!document.getElementById(shieldId)) return;
+          if (!event.isTrusted) return;
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+        };
+        ["keydown", "keypress", "keyup", "beforeinput", "input", "paste"].forEach(type => {
+          document.addEventListener(type, state.keyHandler, true);
+        });
+      }
+
+      state.ensure = ensureRoot;
+      state.message = message;
+
+      if (!state.observer) {
+        state.observer = new MutationObserver(() => ensureRoot());
+        const root = document.documentElement || document;
+        state.observer.observe(root, { childList: true, subtree: true });
+      }
+
+      if (!state.intervalId) {
+        state.intervalId = window.setInterval(() => ensureRoot(), 1000);
+      }
+
+      state.remove = () => {
+        if (state.observer) state.observer.disconnect();
+        if (state.intervalId) window.clearInterval(state.intervalId);
+        const root = document.getElementById(shieldId);
+        if (root) root.remove();
+        const style = document.getElementById(styleId);
+        if (style) style.remove();
+        if (state.keyHandler) {
+          ["keydown", "keypress", "keyup", "beforeinput", "input", "paste"].forEach(type => {
+            document.removeEventListener(type, state.keyHandler, true);
+          });
+        }
+        delete window[key];
+        return { ok: true, installed: false };
+      };
+
+      window[key] = state;
+      ensureRoot();
+      return { ok: true, installed: true, message, title: document.title || "", url: location.href || "" };
+    })()
+    """
+}
+
+func browserShieldRemoveScript() -> String {
+    """
+    (() => {
+      const key = "__screenRecorderAgentShield";
+      const shieldId = "screenrecorder-agent-shield";
+      const styleId = "screenrecorder-agent-shield-style";
+      if (window[key] && typeof window[key].remove === "function") {
+        return window[key].remove();
+      }
+      const root = document.getElementById(shieldId);
+      if (root) root.remove();
+      const style = document.getElementById(styleId);
+      if (style) style.remove();
+      delete window[key];
+      return { ok: true, installed: false };
+    })()
+    """
+}
+
+func browserShieldStatusScript() -> String {
+    """
+    (() => {
+      const key = "__screenRecorderAgentShield";
+      const root = document.getElementById("screenrecorder-agent-shield");
+      const state = window[key] || {};
+      return {
+        ok: true,
+        installed: !!root,
+        message: state.message || "",
+        title: document.title || "",
+        url: location.href || ""
+      };
+    })()
+    """
 }
 
 private struct BrowserTabInfo {
@@ -405,6 +568,64 @@ actor ChromiumBrowserController: BrowserController {
         return ["ok": true, "tab": tab.dictionary]
     }
 
+    func installShield(port: Int, params: [String: Any]) async throws -> [String: Any] {
+        let tab = try await resolveTab(port: port, params: params)
+        let socketURL = try tabSocketURL(for: tab)
+        let cdp = CDPConnection(url: socketURL)
+        defer { Task { await cdp.close() } }
+
+        _ = try await cdp.call(method: "Page.enable")
+        try? await waitForDocumentReady(cdp: cdp)
+        let message = params["message"] as? String ?? "Agent controlling this tab"
+        let messageLiteral = try jsStringLiteral(message)
+        let result = try await cdp.call(
+            method: "Runtime.evaluate",
+            params: [
+                "expression": browserShieldInstallScript(messageLiteral: messageLiteral),
+                "returnByValue": true,
+                "awaitPromise": true,
+            ]
+        )
+        let payload = normalizeRemoteResult(result["result"] as? [String: Any] ?? [:])
+        return ["ok": true, "tab": tab.dictionary, "shield": payload]
+    }
+
+    func removeShield(port: Int, params: [String: Any]) async throws -> [String: Any] {
+        let tab = try await resolveTab(port: port, params: params)
+        let socketURL = try tabSocketURL(for: tab)
+        let cdp = CDPConnection(url: socketURL)
+        defer { Task { await cdp.close() } }
+
+        let result = try await cdp.call(
+            method: "Runtime.evaluate",
+            params: [
+                "expression": browserShieldRemoveScript(),
+                "returnByValue": true,
+                "awaitPromise": true,
+            ]
+        )
+        let payload = normalizeRemoteResult(result["result"] as? [String: Any] ?? [:])
+        return ["ok": true, "tab": tab.dictionary, "shield": payload]
+    }
+
+    func shieldStatus(port: Int, params: [String: Any]) async throws -> [String: Any] {
+        let tab = try await resolveTab(port: port, params: params)
+        let socketURL = try tabSocketURL(for: tab)
+        let cdp = CDPConnection(url: socketURL)
+        defer { Task { await cdp.close() } }
+
+        let result = try await cdp.call(
+            method: "Runtime.evaluate",
+            params: [
+                "expression": browserShieldStatusScript(),
+                "returnByValue": true,
+                "awaitPromise": true,
+            ]
+        )
+        let payload = normalizeRemoteResult(result["result"] as? [String: Any] ?? [:])
+        return ["ok": true, "tab": tab.dictionary, "shield": payload]
+    }
+
     private func browserVersion(port: Int) async throws -> [String: Any] {
         try await getJSON(path: "/json/version", port: port)
     }
@@ -600,6 +821,18 @@ actor BrowserAutomationManager {
 
     private let chromium = ChromiumBrowserController()
     private let safari = SafariBrowserController()
+    private struct BrowserShieldTarget: Equatable {
+        let backend: String
+        let port: Int
+        let tabId: String
+        let title: String
+        let url: String
+        let message: String
+    }
+
+    private let shieldTTLNs: UInt64 = 8_000_000_000
+    private var activeBrowserShield: BrowserShieldTarget?
+    private var browserShieldGeneration: Int = 0
 
     private func controller(for params: [String: Any]?) throws -> any BrowserController {
         let backend = (params?["backend"] as? String ?? "chromium").lowercased()
@@ -617,6 +850,103 @@ actor BrowserAutomationManager {
         params?["port"] as? Int ?? 9222
     }
 
+    private func controllerForBackend(_ backend: String) throws -> any BrowserController {
+        switch backend {
+        case "chromium":
+            return chromium
+        case "safari":
+            return safari
+        default:
+            throw BrowserAutomationError.unsupportedBackend(backend)
+        }
+    }
+
+    private func shieldMessage(from params: [String: Any]?) -> String {
+        params?["message"] as? String ?? "Agent controlling this tab"
+    }
+
+    private func installOrRefreshShield(using controller: any BrowserController, params: [String: Any]) async {
+        let port = port(from: params)
+        let message = shieldMessage(from: params)
+        do {
+            var shieldParams = params
+            shieldParams["message"] = message
+            let installed = try await controller.installShield(port: port, params: shieldParams)
+            let tab = installed["tab"] as? [String: Any] ?? [:]
+            let tabId = tab["id"] as? String ?? ""
+            guard !tabId.isEmpty else { return }
+
+            let target = BrowserShieldTarget(
+                backend: controller.backendName,
+                port: port,
+                tabId: tabId,
+                title: tab["title"] as? String ?? "",
+                url: tab["url"] as? String ?? "",
+                message: message
+            )
+
+            if let previous = activeBrowserShield, previous != target {
+                if let previousController = try? controllerForBackend(previous.backend) {
+                    _ = try? await previousController.removeShield(
+                        port: previous.port,
+                        params: ["tab_id": previous.tabId]
+                    )
+                }
+            }
+
+            activeBrowserShield = target
+            browserShieldGeneration += 1
+            let generation = browserShieldGeneration
+
+            await MainActor.run {
+                InteractionShieldManager.shared.dismissNative(reason: "target_changed")
+                InteractionShieldManager.shared.recordBrowserActive(
+                    backend: target.backend,
+                    port: target.port,
+                    tabId: target.tabId,
+                    title: target.title,
+                    url: target.url,
+                    message: target.message
+                )
+            }
+
+            Task {
+                try? await Task.sleep(nanoseconds: shieldTTLNs)
+                await self.expireBrowserShieldIfUnchanged(generation: generation, target: target)
+            }
+        } catch {
+            await MainActor.run {
+                InteractionShieldManager.shared.recordBrowserFailed(
+                    backend: controller.backendName,
+                    port: port,
+                    message: message,
+                    reason: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func expireBrowserShieldIfUnchanged(generation: Int, target: BrowserShieldTarget) async {
+        guard browserShieldGeneration == generation, activeBrowserShield == target else { return }
+        if let controller = try? controllerForBackend(target.backend) {
+            _ = try? await controller.removeShield(port: target.port, params: ["tab_id": target.tabId])
+        }
+        activeBrowserShield = nil
+        await MainActor.run {
+            InteractionShieldManager.shared.dismissBrowser(reason: "idle_timeout")
+        }
+    }
+
+    private func refreshShieldAfterAction(using controller: any BrowserController, result: [String: Any], fallbackParams: [String: Any]) async {
+        var params = fallbackParams
+        if let tab = result["tab"] as? [String: Any],
+           let tabId = tab["id"] as? String,
+           !tabId.isEmpty {
+            params["tab_id"] = tabId
+        }
+        await installOrRefreshShield(using: controller, params: params)
+    }
+
     func status(params: [String: Any]?) async throws -> [String: Any] {
         try await controller(for: params).status(port: port(from: params))
     }
@@ -628,13 +958,15 @@ actor BrowserAutomationManager {
         let url = params?["url"] as? String
         let activate = params?["activate"] as? Bool ?? false
         let isolated = params?["isolated"] as? Bool ?? true
-        return try await controller.launch(
+        let result = try await controller.launch(
             appName: appName,
             port: port(from: params),
             startURL: url,
             activate: activate,
             isolated: isolated
         )
+        await refreshShieldAfterAction(using: controller, result: result, fallbackParams: params ?? [:])
+        return result
     }
 
     func launchAndOpen(params: [String: Any]?) async throws -> [String: Any] {
@@ -648,15 +980,17 @@ actor BrowserAutomationManager {
         let newTab = params?["new_tab"] as? Bool ?? false
 
         if (try? await controller.status(port: port)) == nil {
-            var launched = try await controller.launch(
+            let launched = try await controller.launch(
                 appName: appName,
                 port: port,
                 startURL: url,
                 activate: activate,
                 isolated: isolated
             )
-            launched["operation"] = "launch_and_open"
-            return launched
+            await refreshShieldAfterAction(using: controller, result: launched, fallbackParams: params ?? [:])
+            var enriched = launched
+            enriched["operation"] = "launch_and_open"
+            return enriched
         }
 
         guard let url, !url.isEmpty else {
@@ -672,6 +1006,7 @@ actor BrowserAutomationManager {
             try await controller.navigate(port: port, params: params ?? [:])
         }
 
+        await refreshShieldAfterAction(using: controller, result: result, fallbackParams: params ?? [:])
         var enriched = result
         enriched["operation"] = "launch_and_open"
         enriched["launched"] = false
@@ -690,34 +1025,98 @@ actor BrowserAutomationManager {
         guard let url = params?["url"] as? String else {
             throw BrowserAutomationError.invalidArgument("Missing browser URL")
         }
-        return try await controller(for: params).openTab(port: port(from: params), url: url)
+        let controller = try controller(for: params)
+        let result = try await controller.openTab(port: port(from: params), url: url)
+        await refreshShieldAfterAction(using: controller, result: result, fallbackParams: params ?? [:])
+        return result
     }
 
     func navigate(params: [String: Any]?) async throws -> [String: Any] {
-        try await controller(for: params).navigate(port: port(from: params), params: params ?? [:])
+        let controller = try controller(for: params)
+        await installOrRefreshShield(using: controller, params: params ?? [:])
+        let result = try await controller.navigate(port: port(from: params), params: params ?? [:])
+        await refreshShieldAfterAction(using: controller, result: result, fallbackParams: params ?? [:])
+        return result
     }
 
     func evaluate(params: [String: Any]?) async throws -> [String: Any] {
-        try await controller(for: params).evaluate(port: port(from: params), params: params ?? [:])
+        let controller = try controller(for: params)
+        await installOrRefreshShield(using: controller, params: params ?? [:])
+        let result = try await controller.evaluate(port: port(from: params), params: params ?? [:])
+        await refreshShieldAfterAction(using: controller, result: result, fallbackParams: params ?? [:])
+        return result
     }
 
     func click(params: [String: Any]?) async throws -> [String: Any] {
-        try await controller(for: params).click(port: port(from: params), params: params ?? [:])
+        let controller = try controller(for: params)
+        await installOrRefreshShield(using: controller, params: params ?? [:])
+        let result = try await controller.click(port: port(from: params), params: params ?? [:])
+        await refreshShieldAfterAction(using: controller, result: result, fallbackParams: params ?? [:])
+        return result
     }
 
     func type(params: [String: Any]?) async throws -> [String: Any] {
-        try await controller(for: params).type(port: port(from: params), params: params ?? [:])
+        let controller = try controller(for: params)
+        await installOrRefreshShield(using: controller, params: params ?? [:])
+        let result = try await controller.type(port: port(from: params), params: params ?? [:])
+        await refreshShieldAfterAction(using: controller, result: result, fallbackParams: params ?? [:])
+        return result
     }
 
     func pressKey(params: [String: Any]?) async throws -> [String: Any] {
-        try await controller(for: params).pressKey(port: port(from: params), params: params ?? [:])
+        let controller = try controller(for: params)
+        await installOrRefreshShield(using: controller, params: params ?? [:])
+        let result = try await controller.pressKey(port: port(from: params), params: params ?? [:])
+        await refreshShieldAfterAction(using: controller, result: result, fallbackParams: params ?? [:])
+        return result
     }
 
     func screenshot(params: [String: Any]?) async throws -> [String: Any] {
-        try await controller(for: params).screenshot(port: port(from: params), params: params ?? [:])
+        let controller = try controller(for: params)
+        await installOrRefreshShield(using: controller, params: params ?? [:])
+        let result = try await controller.screenshot(port: port(from: params), params: params ?? [:])
+        await refreshShieldAfterAction(using: controller, result: result, fallbackParams: params ?? [:])
+        return result
     }
 
     func activateTab(params: [String: Any]?) async throws -> [String: Any] {
-        try await controller(for: params).activateTab(port: port(from: params), params: params ?? [:])
+        let controller = try controller(for: params)
+        let result = try await controller.activateTab(port: port(from: params), params: params ?? [:])
+        await refreshShieldAfterAction(using: controller, result: result, fallbackParams: params ?? [:])
+        return result
+    }
+
+    func enableShield(params: [String: Any]?) async throws -> [String: Any] {
+        let controller = try controller(for: params)
+        let shieldParams = params ?? [:]
+        let result = try await controller.installShield(port: port(from: params), params: shieldParams)
+        await refreshShieldAfterAction(using: controller, result: result, fallbackParams: shieldParams)
+        return result
+    }
+
+    func disableShield(params: [String: Any]?) async throws -> [String: Any] {
+        if let current = activeBrowserShield {
+            let controller = try controllerForBackend(current.backend)
+            let result = try await controller.removeShield(
+                port: current.port,
+                params: ["tab_id": current.tabId]
+            )
+            activeBrowserShield = nil
+            browserShieldGeneration += 1
+            await MainActor.run {
+                InteractionShieldManager.shared.dismissBrowser(reason: "disabled")
+            }
+            return result
+        }
+        await MainActor.run {
+            InteractionShieldManager.shared.dismissBrowser(reason: "disabled")
+        }
+        return ["ok": true, "disabled": true]
+    }
+
+    func scopedShieldStatus() async -> [String: Any] {
+        await MainActor.run {
+            InteractionShieldManager.shared.status()
+        }
     }
 }

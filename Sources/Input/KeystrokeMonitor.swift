@@ -2,12 +2,12 @@ import AppKit
 import CoreGraphics
 import Carbon.HIToolbox
 
-/// Monitors global keyboard events using CGEvent tap.
-/// Requires Accessibility permission in System Preferences.
+/// Monitors global keyboard events using a CGEvent tap.
+/// Requires Accessibility permission in System Settings.
 class KeystrokeMonitor {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var globalMonitor: Any?
+    private var tapRunLoop: CFRunLoop?
     private(set) var isMonitoring = false
 
     var onKeystroke: ((KeystrokeEvent) -> Void)?
@@ -17,19 +17,11 @@ class KeystrokeMonitor {
     func startMonitoring() {
         guard !isMonitoring else { return }
 
-        // Try NSEvent global monitor first (higher-level Cocoa API)
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            self?.handleNSEvent(event)
-        }
-
-        if globalMonitor != nil {
-            isMonitoring = true
-            print("✅ Keystroke monitoring active (NSEvent global monitor)")
+        guard AXIsProcessTrusted() else {
+            print("❌ Keystroke monitoring unavailable — Accessibility permission not trusted yet")
             return
         }
 
-        // Fallback: CGEvent tap
-        print("⚠️ NSEvent monitor failed, trying CGEvent tap...")
         let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
         let userInfo = Unmanaged.passRetained(self).toOpaque()
 
@@ -46,19 +38,21 @@ class KeystrokeMonitor {
             },
             userInfo: userInfo
         ) else {
-            print("❌ CGEvent.tapCreate() also failed — Accessibility permission not granted")
+            print("❌ CGEvent.tapCreate() failed even though Accessibility appears granted")
             Unmanaged<KeystrokeMonitor>.fromOpaque(userInfo).release()
             return
         }
 
-        print("✅ Keystroke monitoring active (CGEvent tap)")
         eventTap = tap
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         if let source = runLoopSource {
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+            let runLoop = CFRunLoopGetCurrent()
+            tapRunLoop = runLoop
+            CFRunLoopAddSource(runLoop, source, .commonModes)
         }
         CGEvent.tapEnable(tap: tap, enable: true)
         isMonitoring = true
+        print("✅ Keystroke monitoring active (CGEvent tap)")
     }
 
     // MARK: - Stop Monitoring
@@ -66,58 +60,16 @@ class KeystrokeMonitor {
     func stopMonitoring() {
         guard isMonitoring else { return }
 
-        // Clean up NSEvent monitor
-        if let monitor = globalMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalMonitor = nil
-        }
-
-        // Clean up CGEvent tap
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
-            if let source = runLoopSource {
-                CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            if let source = runLoopSource, let runLoop = tapRunLoop {
+                CFRunLoopRemoveSource(runLoop, source, .commonModes)
             }
         }
         eventTap = nil
         runLoopSource = nil
+        tapRunLoop = nil
         isMonitoring = false
-    }
-
-    // MARK: - Handle NSEvent (preferred)
-
-    private func handleNSEvent(_ event: NSEvent) {
-        let keyCode = Int(event.keyCode)
-        var modifiers: [ModifierKey] = []
-        let flags = event.modifierFlags
-        if flags.contains(.control) { modifiers.append(.control) }
-        if flags.contains(.option) { modifiers.append(.option) }
-        if flags.contains(.shift) { modifiers.append(.shift) }
-        if flags.contains(.command) { modifiers.append(.command) }
-
-        let isSpecial = Self.isSpecialKey(keyCode: keyCode)
-        let keyString: String
-
-        if isSpecial {
-            // Special keys (backspace, return, tab, arrows, etc.) — use symbol
-            keyString = Self.specialKeyName(keyCode: keyCode)
-        } else if let chars = event.charactersIgnoringModifiers, !chars.isEmpty,
-           let scalar = chars.unicodeScalars.first, scalar.value >= 32, scalar.value < 127 {
-            // Printable ASCII characters
-            keyString = chars.uppercased()
-        } else {
-            keyString = Self.specialKeyName(keyCode: keyCode)
-        }
-
-        let keystroke = KeystrokeEvent(
-            keyString: keyString,
-            modifiers: modifiers,
-            isSpecialKey: isSpecial
-        )
-
-        DispatchQueue.main.async { [weak self] in
-            self?.onKeystroke?(keystroke)
-        }
     }
 
     // MARK: - Handle CGEvent (fallback)

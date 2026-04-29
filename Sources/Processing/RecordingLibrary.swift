@@ -73,7 +73,10 @@ class RecordingLibrary: ObservableObject {
         }
 
         let videoExtensions = Set(["mov", "mp4"])
-        let videoFiles = contents.filter { videoExtensions.contains($0.pathExtension.lowercased()) }
+        let videoFiles = contents.filter {
+            videoExtensions.contains($0.pathExtension.lowercased())
+                && !$0.lastPathComponent.contains("_share")
+        }
 
         var newEntries: [LibraryEntry] = []
 

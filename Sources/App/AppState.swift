@@ -17,6 +17,7 @@ class AppState: ObservableObject {
         static let frameRate = "frameRate"
         static let cameraSize = "cameraSize"
         static let micVolume = "micVolume"
+        static let isShareOptimizedExportEnabled = "isShareOptimizedExportEnabled"
     }
 
     // MARK: - Recording State (runtime only, NOT persisted)
@@ -48,6 +49,9 @@ class AppState: ObservableObject {
     @Published var isMicMuted = false           // During-recording mute (doesn't disable mic)
     @Published var isCameraPreviewHidden = false // During-recording hide (doesn't disable camera)
     @Published var micVolume: Int = 5            // 0-10 scale, 0 = mute, 5 = default
+
+    // MARK: - Sharing Settings (persisted)
+    @Published var isShareOptimizedExportEnabled = false   // Auto-export MP4 H.264 for social sharing
 
     // MARK: - Agent Server Settings
     @Published var isAgentServerEnabled = true   // Start JSON-RPC server on launch
@@ -135,6 +139,9 @@ class AppState: ObservableObject {
         if defaults.object(forKey: Keys.micVolume) != nil {
             micVolume = defaults.integer(forKey: Keys.micVolume)
         }
+        if defaults.object(forKey: Keys.isShareOptimizedExportEnabled) != nil {
+            isShareOptimizedExportEnabled = defaults.bool(forKey: Keys.isShareOptimizedExportEnabled)
+        }
     }
 
     private func saveSettings() {
@@ -147,6 +154,7 @@ class AppState: ObservableObject {
         defaults.set(frameRate, forKey: Keys.frameRate)
         defaults.set(Double(cameraSize), forKey: Keys.cameraSize)
         defaults.set(micVolume, forKey: Keys.micVolume)
+        defaults.set(isShareOptimizedExportEnabled, forKey: Keys.isShareOptimizedExportEnabled)
     }
 
     private func setupAutoSave() {
@@ -159,7 +167,8 @@ class AppState: ObservableObject {
             $saveDirectory.map { _ in () }.eraseToAnyPublisher(),
             $frameRate.map { _ in () }.eraseToAnyPublisher(),
             $cameraSize.map { _ in () }.eraseToAnyPublisher(),
-            $micVolume.map { _ in () }.eraseToAnyPublisher()
+            $micVolume.map { _ in () }.eraseToAnyPublisher(),
+            $isShareOptimizedExportEnabled.map { _ in () }.eraseToAnyPublisher()
         )
         .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
         .sink { [weak self] in

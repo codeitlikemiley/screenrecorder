@@ -29,6 +29,7 @@ struct SR: ParsableCommand {
             Input.self,
             App.self,
             Browser.self,
+            Shield.self,
             Safety.self,
             Ax.self,
             Shell.self,
