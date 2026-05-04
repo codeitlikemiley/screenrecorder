@@ -91,23 +91,51 @@ class KeystrokeMonitor {
         // Only process key down events (not flagsChanged)
         guard type == .keyDown else { return }
 
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        print("⌨️ CGEvent tap received keyDown: keyCode=\(keyCode)")
+        let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
 
-        // Build modifier list
-        var modifiers: [ModifierKey] = []
-        if flags.contains(.maskControl) { modifiers.append(.control) }
-        if flags.contains(.maskAlternate) { modifiers.append(.option) }
-        if flags.contains(.maskShift) { modifiers.append(.shift) }
-        if flags.contains(.maskCommand) { modifiers.append(.command) }
+        let hasCmd = flags.contains(.maskCommand)
+        let hasCtrl = flags.contains(.maskControl)
+        let hasOpt = flags.contains(.maskAlternate)
+        let hasShift = flags.contains(.maskShift)
 
-        let keyString = Self.keyCodeToString(keyCode: Int(keyCode), event: event)
-        let isSpecial = Self.isSpecialKey(keyCode: Int(keyCode))
+        let isSpecial = Self.isSpecialKey(keyCode: keyCode)
+
+        // Get the actual character the key produces (with modifiers applied)
+        let actualChar = Self.actualCharacter(from: event)
+        // Get the unmodified character (without shift)
+        let baseChar = Self.baseCharacter(from: event)
+
+        // Determine which modifiers to DISPLAY.
+        // Rule: Only show Shift (⇧) when it's part of a real shortcut (with Cmd/Ctrl/Opt)
+        //        or with special keys (arrows, F-keys, etc.).
+        //        When Shift just changes the character (a→A, 1→!), show the resulting
+        //        character WITHOUT the ⇧ prefix — it's redundant.
+        var displayModifiers: [ModifierKey] = []
+        if hasCtrl { displayModifiers.append(.control) }
+        if hasOpt { displayModifiers.append(.option) }
+        if hasCmd { displayModifiers.append(.command) }
+
+        // Only show ⇧ if it's a real shortcut combo or with special keys
+        if hasShift && (hasCmd || hasCtrl || hasOpt || isSpecial) {
+            displayModifiers.insert(.shift, at: displayModifiers.isEmpty ? 0 : 1)
+        }
+
+        // Determine the display string for the key itself
+        let keyString: String
+        if isSpecial {
+            keyString = Self.specialKeyName(keyCode: keyCode)
+        } else if hasCmd || hasCtrl || hasOpt {
+            // For shortcuts, show the base key (e.g. Cmd+C not Cmd+c)
+            keyString = baseChar.uppercased()
+        } else {
+            // Normal typing — show the actual character produced (with shift applied)
+            keyString = actualChar
+        }
 
         let keystroke = KeystrokeEvent(
             keyString: keyString,
-            modifiers: modifiers,
+            modifiers: displayModifiers,
             isSpecialKey: isSpecial
         )
 
@@ -116,45 +144,59 @@ class KeystrokeMonitor {
         }
     }
 
-    // MARK: - Key Code Translation
+    // MARK: - Character Extraction
 
-    static func keyCodeToString(keyCode: Int, event: CGEvent) -> String {
-        // Try to get the character from the event first
-        if let chars = event.copy(), let nsEvent = NSEvent(cgEvent: chars) {
-            if let characters = nsEvent.charactersIgnoringModifiers, !characters.isEmpty {
-                let char = characters.uppercased()
-                // Filter out non-printable characters
-                if char.unicodeScalars.first?.value ?? 0 >= 32 {
-                    return char
+    /// Get the actual character produced by this event (with all modifiers applied)
+    private static func actualCharacter(from event: CGEvent) -> String {
+        if let nsEvent = NSEvent(cgEvent: event) {
+            if let characters = nsEvent.characters, !characters.isEmpty {
+                let scalar = characters.unicodeScalars.first?.value ?? 0
+                // Filter control characters but keep space
+                if scalar >= 32 || scalar == 9 { // 9 = tab
+                    return characters
                 }
             }
         }
-
-        // Fallback to known key codes for special keys
-        return specialKeyName(keyCode: keyCode)
+        return "?"
     }
 
+    /// Get the base character (without shift) for shortcut display
+    private static func baseCharacter(from event: CGEvent) -> String {
+        if let nsEvent = NSEvent(cgEvent: event) {
+            if let characters = nsEvent.charactersIgnoringModifiers, !characters.isEmpty {
+                let scalar = characters.unicodeScalars.first?.value ?? 0
+                if scalar >= 32 {
+                    return characters
+                }
+            }
+        }
+        return "?"
+    }
+
+    // MARK: - Special Key Detection
+
     static func isSpecialKey(keyCode: Int) -> Bool {
-        return [36, 48, 49, 51, 53, 76, 115, 116, 117, 119, 121, 123, 124, 125, 126].contains(keyCode)
+        return [36, 48, 49, 51, 53, 76, 115, 116, 117, 119, 121, 123, 124, 125, 126,
+                122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111].contains(keyCode)
     }
 
     static func specialKeyName(keyCode: Int) -> String {
         switch keyCode {
-        case 36: return "↩"     // Return
-        case 48: return "⇥"     // Tab
-        case 49: return "Space"  // Space
-        case 51: return "⌫"     // Delete
-        case 53: return "⎋"     // Escape
-        case 76: return "↩"     // Enter (numpad)
-        case 115: return "↖"    // Home
-        case 116: return "⇞"    // Page Up
-        case 117: return "⌦"    // Forward Delete
-        case 119: return "↘"    // End
-        case 121: return "⇟"    // Page Down
-        case 123: return "←"    // Left Arrow
-        case 124: return "→"    // Right Arrow
-        case 125: return "↓"    // Down Arrow
-        case 126: return "↑"    // Up Arrow
+        case 36: return "↩"      // Return
+        case 48: return "⇥"      // Tab
+        case 49: return "␣"      // Space — visible symbol
+        case 51: return "⌫"      // Delete
+        case 53: return "⎋"      // Escape
+        case 76: return "↩"      // Enter (numpad)
+        case 115: return "↖"     // Home
+        case 116: return "⇞"     // Page Up
+        case 117: return "⌦"     // Forward Delete
+        case 119: return "↘"     // End
+        case 121: return "⇟"     // Page Down
+        case 123: return "←"     // Left Arrow
+        case 124: return "→"     // Right Arrow
+        case 125: return "↓"     // Down Arrow
+        case 126: return "↑"     // Up Arrow
         case 122: return "F1"
         case 120: return "F2"
         case 99: return "F3"
