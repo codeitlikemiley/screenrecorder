@@ -92,9 +92,13 @@ codesign --force --sign "$SIGNING_IDENTITY" \
 echo "📋 Registering execution policy..."
 spctl --add --label "ScreenRecorder" "$APP_DIR" 2>/dev/null || true
 
-# Note: Accessibility permissions are tied to CDHash (code signature hash).
-# After a local rebuild the hash changes and macOS TCC will prompt again.
-# This is a dev-only inconvenience; release builds are approved once per install.
+# Reset stale Accessibility TCC entry.
+# Accessibility permissions are tied to CDHash (code signature hash).
+# After a rebuild the hash changes and the old entry becomes stale —
+# the toggle shows ON in System Settings but AXIsProcessTrusted() returns
+# false. Resetting forces macOS to re-evaluate on next launch.
+echo "🔐 Resetting Accessibility TCC entry (CDHash changed after rebuild)..."
+tccutil reset Accessibility "$BUNDLE_ID" 2>/dev/null || true
 
 # Write license server URL into shared UserDefaults (for GUI app)
 # In .env: SR_LICENSE_SERVER=http://localhost:3000

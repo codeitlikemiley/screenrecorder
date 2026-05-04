@@ -16,6 +16,7 @@ class RecordingCoordinator: ObservableObject {
     let agentServer = AgentServer()
     private var agentRouter: AgentRouter?
     private var videoWriter: VideoWriter?
+    private var accessibilityTimer: Timer?
     private var isSetUp = false
 
     /// Called whenever annotation mode changes. AppDelegate uses this to
@@ -81,21 +82,21 @@ class RecordingCoordinator: ObservableObject {
         // Silent permission checks (no prompts)
         appState.hasCameraPermission = PermissionManager.shared.checkCameraPermission()
         appState.hasMicrophonePermission = PermissionManager.shared.checkMicrophonePermission()
-        appState.hasAccessibilityPermission = PermissionManager.shared.checkAccessibilityPermission()
         appState.hasScreenPermission = true
 
-        // Keep the persisted keystroke toggle honest at launch: if the user left
-        // it enabled, quietly restore monitoring only when Accessibility is
-        // already trusted. Otherwise clear the toggle instead of pretending the
-        // overlay is active.
+        // For Accessibility: AXIsProcessTrusted() can return false even when
+        // the toggle is ON in System Settings (CDHash mismatch after rebuild).
+        // So we try the event tap directly — if it works, we have real permission.
         if appState.isKeystrokeOverlayEnabled {
-            if appState.hasAccessibilityPermission {
-                keystrokeMonitor.startMonitoring()
-            }
-            if !keystrokeMonitor.isMonitoring {
-                appState.isKeystrokeOverlayEnabled = false
-            }
+            keystrokeMonitor.startMonitoring()
         }
+        // Derive permission state from whether the tap actually succeeded
+        appState.hasAccessibilityPermission = keystrokeMonitor.isMonitoring || AXIsProcessTrusted()
+
+        // Periodically re-check Accessibility permission (macOS doesn't apply
+        // it until restart, but we poll so the Settings UI stays honest and
+        // we can auto-start monitoring the moment it becomes available).
+        startAccessibilityPolling()
 
         // Start agent server for programmatic control (idempotent — safe if already started)
         startAgentServer()
@@ -133,9 +134,11 @@ class RecordingCoordinator: ObservableObject {
             if !granted { appState.isMicrophoneEnabled = false }
         }
         if appState.isKeystrokeOverlayEnabled {
-            let granted = PermissionManager.shared.requestAccessibilityPermission()
-            appState.hasAccessibilityPermission = granted
-            if !granted { appState.isKeystrokeOverlayEnabled = false }
+            // Try the tap directly — AXIsProcessTrusted() is unreliable after rebuilds
+            if !keystrokeMonitor.isMonitoring {
+                keystrokeMonitor.startMonitoring()
+            }
+            appState.hasAccessibilityPermission = keystrokeMonitor.isMonitoring || AXIsProcessTrusted()
         }
 
         // 2. Check if any new permissions were granted since app launch → restart needed
@@ -424,39 +427,84 @@ class RecordingCoordinator: ObservableObject {
     // MARK: - Helpers
 
     private func startKeystrokeMonitorWithPermissionCheck() {
-        let trusted = PermissionManager.shared.checkAccessibilityPermission()
-        print("🔑 Accessibility check: AXIsProcessTrusted = \(trusted)")
-
-        // Try to create the event tap first (might work even if AXIsProcessTrusted is false)
+        // Just try the tap directly — it's the true permission test
         keystrokeMonitor.startMonitoring()
 
         if keystrokeMonitor.isMonitoring {
             appState.hasAccessibilityPermission = true
-            appState.isKeystrokeOverlayEnabled = true
             print("✅ Keystroke monitoring started successfully")
             return
         }
 
-        appState.isKeystrokeOverlayEnabled = false
+        // Tap failed. Don't disable the toggle — the polling timer will keep
+        // retrying every 3s. Guide the user to fix the permission.
+        print("⚠️ CGEvent tap failed — Accessibility permission not effective")
 
-        // If the monitor still can't start after the app already appears trusted,
-        // do not prompt again. Repeated prompts are noisy and don't fix a tap that
-        // is failing for some other reason.
-        if trusted {
+        if AXIsProcessTrusted() {
+            // AXIsProcessTrusted says yes but tap failed — very rare, could be system issue
             appState.hasAccessibilityPermission = true
-            print("❌ Keystroke overlay disabled — monitoring failed to start even though Accessibility appears granted")
+            print("   ℹ️  AXIsProcessTrusted() = true but tap failed. Try restarting the app.")
+        } else {
+            // Open System Settings on first attempt
+            if !PermissionManager.shared.checkAccessibilityPermission() {
+                _ = PermissionManager.shared.requestAccessibilityPermission()
+            }
+            print("   ℹ️  Toggle ScreenRecorder OFF then ON in System Settings → Accessibility")
+            // Start polling to auto-detect when it works
+            startAccessibilityPolling()
+        }
+    }
+
+    // MARK: - Accessibility Polling
+
+    /// Periodically attempt to acquire Accessibility permission.
+    /// AXIsProcessTrusted() can return false after a rebuild (CDHash mismatch)
+    /// even when the System Settings toggle is ON. So we also try creating the
+    /// CGEvent tap directly — if THAT works, we have real permission.
+    ///
+    /// We poll every 3 seconds until either AXIsProcessTrusted() returns true
+    /// or we successfully start the keystroke monitor.
+    private func startAccessibilityPolling() {
+        accessibilityTimer?.invalidate()
+        // Don't poll if we already have a working tap
+        guard !keystrokeMonitor.isMonitoring else {
+            appState.hasAccessibilityPermission = true
             return
         }
 
-        // Tap failed and the app is not trusted yet — request permission once per
-        // launch, then guide the user to restart if macOS hasn't applied it.
-        print("⚠️ CGEvent tap failed, requesting Accessibility permission if needed...")
-        let granted = PermissionManager.shared.requestAccessibilityPermission()
-        appState.hasAccessibilityPermission = granted
-        if !granted {
-            PermissionManager.shared.showAccessibilityRestartAlertIfNeeded()
+        accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] timer in
+            Task { @MainActor [weak self] in
+                guard let self = self else { timer.invalidate(); return }
+
+                // Try 1: Check AXIsProcessTrusted()
+                let axTrusted = AXIsProcessTrusted()
+
+                // Try 2: If keystroke overlay is enabled but monitor isn't running,
+                // try starting it. CGEvent.tapCreate() is the real permission test.
+                if !self.keystrokeMonitor.isMonitoring && self.appState.isKeystrokeOverlayEnabled {
+                    self.keystrokeMonitor.startMonitoring()
+                }
+
+                let reallyWorks = self.keystrokeMonitor.isMonitoring
+                let wasGranted = self.appState.hasAccessibilityPermission
+                let nowGranted = axTrusted || reallyWorks
+                self.appState.hasAccessibilityPermission = nowGranted
+
+                if !wasGranted && nowGranted {
+                    print("✅ Accessibility permission granted (detected by polling)")
+                    if reallyWorks {
+                        print("✅ Keystroke monitoring auto-started after permission grant")
+                    }
+                }
+
+                // Stop polling once we have a working tap or confirmed trust
+                if nowGranted {
+                    timer.invalidate()
+                    self.accessibilityTimer = nil
+                }
+            }
         }
-        print("❌ Keystroke overlay disabled — approve Accessibility permission, then restart recording")
+        RunLoop.main.add(accessibilityTimer!, forMode: .common)
     }
 
     // MARK: - Annotation Mode

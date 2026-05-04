@@ -169,6 +169,7 @@ class AnnotationState: ObservableObject {
     @Published var editingTextPosition: CGPoint = .zero
     @Published var editingTextContent: String = ""
     @Published var textFontSize: CGFloat = 24.0
+    var editingExistingStrokeIndex: Int? = nil
 
     // MARK: - Move Mode State
     @Published var selectedStrokeIndex: Int? = nil
@@ -241,31 +242,77 @@ class AnnotationState: ObservableObject {
     func beginTextEditing(at point: CGPoint) {
         editingTextPosition = point
         editingTextContent = ""
+        editingExistingStrokeIndex = nil
+        isEditingText = true
+    }
+
+    /// Begin re-editing an existing text stroke
+    func beginReEditingText(strokeIndex: Int) {
+        guard strokeIndex < strokes.count, strokes[strokeIndex].tool == .text else { return }
+        let stroke = strokes[strokeIndex]
+        editingTextPosition = stroke.points.first ?? .zero
+        editingTextContent = stroke.textContent ?? ""
+        editingExistingStrokeIndex = strokeIndex
         isEditingText = true
     }
 
     func commitText() {
-        guard isEditingText, !editingTextContent.trimmingCharacters(in: .whitespaces).isEmpty else {
+        guard isEditingText, !editingTextContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             isEditingText = false
             editingTextContent = ""
+            editingExistingStrokeIndex = nil
             return
         }
-        let stroke = AnnotationStroke(
-            tool: .text,
-            points: [editingTextPosition],
-            color: selectedColor,
-            lineWidth: textFontSize,
-            textContent: editingTextContent
-        )
-        strokes.append(stroke)
-        undoneStrokes.removeAll()
+
+        if let existingIndex = editingExistingStrokeIndex, existingIndex < strokes.count {
+            // Update existing stroke in-place
+            strokes[existingIndex].textContent = editingTextContent
+            strokes[existingIndex].lineWidth = textFontSize
+            strokes[existingIndex].color = selectedColor
+        } else {
+            // Create new text stroke
+            let stroke = AnnotationStroke(
+                tool: .text,
+                points: [editingTextPosition],
+                color: selectedColor,
+                lineWidth: textFontSize,
+                textContent: editingTextContent
+            )
+            strokes.append(stroke)
+            undoneStrokes.removeAll()
+        }
+
         isEditingText = false
         editingTextContent = ""
+        editingExistingStrokeIndex = nil
     }
 
     func cancelTextEditing() {
         isEditingText = false
         editingTextContent = ""
+        editingExistingStrokeIndex = nil
+    }
+
+    // MARK: - Text Font Size Controls
+
+    func increaseTextSize() {
+        textFontSize = min(textFontSize + 4, 120)
+    }
+
+    func decreaseTextSize() {
+        textFontSize = max(textFontSize - 4, 12)
+    }
+
+    func resetTextSize() {
+        textFontSize = 24
+    }
+
+    // MARK: - Delete Selected Stroke
+
+    func deleteSelectedStroke() {
+        guard let index = selectedStrokeIndex, index < strokes.count else { return }
+        strokes.remove(at: index)
+        selectedStrokeIndex = nil
     }
 
     // MARK: - Move Mode

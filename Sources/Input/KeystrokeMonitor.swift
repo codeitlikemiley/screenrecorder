@@ -17,12 +17,13 @@ class KeystrokeMonitor {
     func startMonitoring() {
         guard !isMonitoring else { return }
 
-        guard AXIsProcessTrusted() else {
-            print("❌ Keystroke monitoring unavailable — Accessibility permission not trusted yet")
-            return
-        }
+        // Don't pre-check AXIsProcessTrusted() — it returns false when the
+        // CDHash changes after a rebuild (macOS TCC tracks by CDHash).
+        // Instead, just try creating the event tap. If it succeeds, we have
+        // real permission regardless of what AXIsProcessTrusted() reports.
 
         let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
+            | (1 << CGEventType.flagsChanged.rawValue)
         let userInfo = Unmanaged.passRetained(self).toOpaque()
 
         guard let tap = CGEvent.tapCreate(
@@ -31,14 +32,26 @@ class KeystrokeMonitor {
             options: .listenOnly,
             eventsOfInterest: eventMask,
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
-                guard let refcon = refcon else { return Unmanaged.passRetained(event) }
+                guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
                 let monitor = Unmanaged<KeystrokeMonitor>.fromOpaque(refcon).takeUnretainedValue()
+
+                // CRITICAL: macOS disables the tap if the callback takes too long.
+                // When that happens, type == .tapDisabledByTimeout. We MUST re-enable it.
+                if type == .tapDisabledByTimeout {
+                    if let tap = monitor.eventTap {
+                        CGEvent.tapEnable(tap: tap, enable: true)
+                        print("⚠️ CGEvent tap was disabled by timeout — re-enabled")
+                    }
+                    return Unmanaged.passUnretained(event)
+                }
+
                 monitor.handleCGEvent(type: type, event: event)
-                return Unmanaged.passRetained(event)
+                return Unmanaged.passUnretained(event)
             },
             userInfo: userInfo
         ) else {
-            print("❌ CGEvent.tapCreate() failed even though Accessibility appears granted")
+            print("❌ CGEvent.tapCreate() failed — Accessibility permission not available")
+            print("   ℹ️  If the toggle is ON in System Settings, try: toggle OFF → ON, or remove and re-add the app")
             Unmanaged<KeystrokeMonitor>.fromOpaque(userInfo).release()
             return
         }
@@ -46,7 +59,7 @@ class KeystrokeMonitor {
         eventTap = tap
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         if let source = runLoopSource {
-            let runLoop = CFRunLoopGetCurrent()
+            let runLoop = CFRunLoopGetMain()  // Use main run loop for reliability
             tapRunLoop = runLoop
             CFRunLoopAddSource(runLoop, source, .commonModes)
         }
@@ -72,12 +85,14 @@ class KeystrokeMonitor {
         isMonitoring = false
     }
 
-    // MARK: - Handle CGEvent (fallback)
+    // MARK: - Handle CGEvent
 
     private func handleCGEvent(type: CGEventType, event: CGEvent) {
+        // Only process key down events (not flagsChanged)
         guard type == .keyDown else { return }
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        print("⌨️ CGEvent tap received keyDown: keyCode=\(keyCode)")
         let flags = event.flags
 
         // Build modifier list

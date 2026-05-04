@@ -6,6 +6,9 @@ import SwiftUI
 struct AnnotationCanvasView: View {
     @ObservedObject var annotationState: AnnotationState
     @FocusState private var isTextFieldFocused: Bool
+    @State private var clickCount: Int = 0
+    @State private var lastClickTime: Date = .distantPast
+    @State private var lastClickLocation: CGPoint = .zero
 
     var body: some View {
         GeometryReader { geometry in
@@ -57,8 +60,26 @@ struct AnnotationCanvasView: View {
                             .onEnded { value in
                                 if annotationState.selectedTool == .move {
                                     annotationState.endMove()
+
+                                    // Double-click detection for re-editing text strokes
+                                    let now = Date()
+                                    let distance = hypot(
+                                        value.location.x - lastClickLocation.x,
+                                        value.location.y - lastClickLocation.y
+                                    )
+                                    if now.timeIntervalSince(lastClickTime) < 0.4 && distance < 20 {
+                                        // Double-click — check if clicked on a text stroke
+                                        if let index = annotationState.hitTestStroke(at: value.location),
+                                           annotationState.strokes[index].tool == .text {
+                                            annotationState.beginReEditingText(strokeIndex: index)
+                                            isTextFieldFocused = true
+                                        }
+                                    }
+                                    lastClickTime = now
+                                    lastClickLocation = value.location
                                 } else if annotationState.selectedTool == .text {
                                     if annotationState.isEditingText {
+                                        // Clicking away from active editor — commit
                                         annotationState.commitText()
                                     }
                                     annotationState.beginTextEditing(at: value.location)
@@ -69,11 +90,14 @@ struct AnnotationCanvasView: View {
                             }
                     )
 
-                // Inline text editing field
+                // Inline glassmorphic text editing field
                 if annotationState.isEditingText {
                     textInputField
                         .position(
-                            x: annotationState.editingTextPosition.x + 100,
+                            x: min(
+                                max(annotationState.editingTextPosition.x + 140, 180),
+                                geometry.size.width - 180
+                            ),
                             y: annotationState.editingTextPosition.y
                         )
                 }
@@ -88,6 +112,27 @@ struct AnnotationCanvasView: View {
                     isTextFieldFocused = false
                 }
             }
+            // Keyboard handling for delete and font size
+            .background(
+                KeyEventHandlingView(
+                    onDelete: {
+                        if annotationState.selectedTool == .move,
+                           annotationState.selectedStrokeIndex != nil {
+                            annotationState.deleteSelectedStroke()
+                        }
+                    },
+                    onFontIncrease: {
+                        annotationState.increaseTextSize()
+                    },
+                    onFontDecrease: {
+                        annotationState.decreaseTextSize()
+                    },
+                    onFontReset: {
+                        annotationState.resetTextSize()
+                    }
+                )
+                .frame(width: 0, height: 0)
+            )
         }
     }
 
@@ -114,51 +159,124 @@ struct AnnotationCanvasView: View {
         return CGRect(x: minX, y: minY, width: max(maxX - minX, 20), height: max(maxY - minY, 20))
     }
 
-    // MARK: - Text Input Field
+    // MARK: - Glassmorphic Text Input Field
 
     private var textInputField: some View {
-        HStack(spacing: 4) {
-            TextField("Type annotation...", text: $annotationState.editingTextContent)
-                .textFieldStyle(.plain)
+        VStack(alignment: .leading, spacing: 0) {
+            // Multi-line text editor
+            TextEditor(text: $annotationState.editingTextContent)
                 .font(.system(size: annotationState.textFontSize, weight: .semibold))
-                .foregroundColor(annotationState.selectedColor)
+                .foregroundColor(.primary)
+                .scrollContentBackground(.hidden)
                 .focused($isTextFieldFocused)
-                .frame(minWidth: 200, maxWidth: 400)
-                .onSubmit {
+                .frame(minWidth: 240, maxWidth: 400, minHeight: 40, maxHeight: 200)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Bottom bar with color indicator and actions
+            HStack(spacing: 8) {
+                // Color indicator
+                Circle()
+                    .fill(annotationState.selectedColor)
+                    .frame(width: 12, height: 12)
+
+                Text("⌘↩ to commit")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                // Font size indicator
+                Text("\(Int(annotationState.textFontSize))pt")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+
+                Button {
                     annotationState.commitText()
                     isTextFieldFocused = false
+                } label: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.green)
                 }
+                .buttonStyle(.plain)
 
-            Button {
+                Button {
+                    annotationState.cancelTextEditing()
+                    isTextFieldFocused = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.red.opacity(0.8))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 4)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            ZStack {
+                // Glassmorphic blur background
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(.ultraThinMaterial)
+                    .environment(\.colorScheme, .dark)
+
+                // Gradient tint: more visible at bottom, fading up
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.black.opacity(0.35),
+                                Color.black.opacity(0.15),
+                                Color.black.opacity(0.05)
+                            ],
+                            startPoint: .bottom,
+                            endPoint: .top
+                        )
+                    )
+
+                // Color border
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                annotationState.selectedColor.opacity(0.7),
+                                annotationState.selectedColor.opacity(0.3),
+                                .white.opacity(0.15)
+                            ],
+                            startPoint: .bottom,
+                            endPoint: .top
+                        ),
+                        lineWidth: 1.5
+                    )
+            }
+        )
+        .shadow(color: .black.opacity(0.3), radius: 16, y: 6)
+        // Handle keyboard shortcuts in the text field
+        .onKeyPress(phases: .down) { press in
+            // Cmd+Enter to commit
+            if press.key == .return && press.modifiers.contains(.command) {
                 annotationState.commitText()
                 isTextFieldFocused = false
-            } label: {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 18))
-                    .foregroundColor(.green)
+                return .handled
             }
-            .buttonStyle(.plain)
-
-            Button {
-                annotationState.cancelTextEditing()
-                isTextFieldFocused = false
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 18))
-                    .foregroundColor(.red.opacity(0.8))
+            // Cmd+= to increase font
+            if press.key == KeyEquivalent("=") && press.modifiers.contains(.command) {
+                annotationState.increaseTextSize()
+                return .handled
             }
-            .buttonStyle(.plain)
+            // Cmd+- to decrease font
+            if press.key == KeyEquivalent("-") && press.modifiers.contains(.command) {
+                annotationState.decreaseTextSize()
+                return .handled
+            }
+            // Cmd+0 to reset font
+            if press.key == KeyEquivalent("0") && press.modifiers.contains(.command) {
+                annotationState.resetTextSize()
+                return .handled
+            }
+            return .ignored
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.black.opacity(0.75))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(annotationState.selectedColor.opacity(0.6), lineWidth: 1.5)
-                )
-        )
     }
 
     // MARK: - Stroke Rendering
@@ -261,28 +379,101 @@ struct AnnotationCanvasView: View {
               let content = stroke.textContent, !content.isEmpty else { return }
 
         let fontSize = stroke.lineWidth // lineWidth doubles as fontSize for text
-        let text = Text(content)
-            .font(.system(size: fontSize, weight: .semibold))
-            .foregroundColor(stroke.color)
 
-        // Draw with background pill for readability
-        let resolved = context.resolve(text)
-        let textSize = resolved.measure(in: CGSize(width: 1000, height: 1000))
+        // Draw each line of text
+        let lines = content.components(separatedBy: "\n")
+        let lineHeight = fontSize * 1.3
 
-        // Background rounded rect
-        let padding: CGFloat = 6
-        let bgRect = CGRect(
-            x: position.x - padding,
-            y: position.y - padding,
-            width: textSize.width + padding * 2,
-            height: textSize.height + padding * 2
-        )
-        let bgPath = Path(roundedRect: bgRect, cornerRadius: 4)
-        context.fill(bgPath, with: .color(.black.opacity(0.6)))
-        context.stroke(bgPath, with: .color(stroke.color.opacity(0.5)), lineWidth: 1)
+        for (index, line) in lines.enumerated() {
+            guard !line.isEmpty else { continue }
+            let text = Text(line)
+                .font(.system(size: fontSize, weight: .semibold))
+                .foregroundColor(stroke.color)
 
-        // Text
-        context.draw(resolved, at: CGPoint(x: position.x + textSize.width / 2, y: position.y + textSize.height / 2))
+            let resolved = context.resolve(text)
+            let textSize = resolved.measure(in: CGSize(width: 1000, height: 1000))
+            let y = position.y + CGFloat(index) * lineHeight
+
+            // Background pill for readability
+            let padding: CGFloat = 4
+            let bgRect = CGRect(
+                x: position.x - padding,
+                y: y - padding,
+                width: textSize.width + padding * 2,
+                height: textSize.height + padding * 2
+            )
+            let bgPath = Path(roundedRect: bgRect, cornerRadius: 3)
+            context.fill(bgPath, with: .color(.black.opacity(0.5)))
+
+            // Text
+            context.draw(resolved, at: CGPoint(x: position.x + textSize.width / 2, y: y + textSize.height / 2))
+        }
     }
 }
 
+// MARK: - Key Event Handler (NSView wrapper for Delete key)
+
+/// NSView-based key event handler since SwiftUI's .onKeyPress doesn't
+/// reliably intercept Delete/Backspace in overlay windows.
+struct KeyEventHandlingView: NSViewRepresentable {
+    var onDelete: () -> Void
+    var onFontIncrease: () -> Void
+    var onFontDecrease: () -> Void
+    var onFontReset: () -> Void
+
+    func makeNSView(context: Context) -> KeyEventNSView {
+        let view = KeyEventNSView()
+        view.onDelete = onDelete
+        view.onFontIncrease = onFontIncrease
+        view.onFontDecrease = onFontDecrease
+        view.onFontReset = onFontReset
+        return view
+    }
+
+    func updateNSView(_ nsView: KeyEventNSView, context: Context) {
+        nsView.onDelete = onDelete
+        nsView.onFontIncrease = onFontIncrease
+        nsView.onFontDecrease = onFontDecrease
+        nsView.onFontReset = onFontReset
+    }
+}
+
+class KeyEventNSView: NSView {
+    var onDelete: (() -> Void)?
+    var onFontIncrease: (() -> Void)?
+    var onFontDecrease: (() -> Void)?
+    var onFontReset: (() -> Void)?
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        let keyCode = event.keyCode
+        let hasCmd = event.modifierFlags.contains(.command)
+
+        // Delete (51) or Forward Delete (117)
+        if keyCode == 51 || keyCode == 117 {
+            onDelete?()
+            return
+        }
+
+        // Cmd+= or Cmd+Shift+= (plus)
+        if hasCmd && (event.charactersIgnoringModifiers == "=" || event.charactersIgnoringModifiers == "+") {
+            onFontIncrease?()
+            return
+        }
+
+        // Cmd+-
+        if hasCmd && event.charactersIgnoringModifiers == "-" {
+            onFontDecrease?()
+            return
+        }
+
+        // Cmd+0
+        if hasCmd && event.charactersIgnoringModifiers == "0" {
+            onFontReset?()
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+}

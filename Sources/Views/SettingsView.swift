@@ -345,10 +345,18 @@ struct SettingsView: View {
                         }
                     }
                     .controlSize(.mini)
+
+                    if name == "Accessibility" {
+                        Button("Restart App") {
+                            PermissionManager.shared.restartApp()
+                        }
+                        .controlSize(.mini)
+                        .foregroundStyle(.blue)
+                    }
                 }
             }
             if !granted && name == "Accessibility" {
-                Text("Click \"+\" in Accessibility, select the app from the Finder window that opens, then toggle it on.")
+                Text("If the toggle is already ON: toggle it OFF, wait 2 seconds, then toggle it back ON. This re-authorizes the app after a rebuild.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
