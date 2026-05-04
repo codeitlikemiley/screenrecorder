@@ -384,10 +384,201 @@ class RecordingCoordinator: ObservableObject {
 
     func toggleRecording() async {
         if appState.isRecording {
-            await stopRecording()
+            if appState.isCameraOnlyRecording {
+                await stopCameraOnlyRecording()
+            } else {
+                await stopRecording()
+            }
         } else {
             await startRecording()
         }
+    }
+
+    // MARK: - Camera-Only Recording
+
+    private var cameraWriter: CameraWriter?
+
+    func toggleCameraRecording() async {
+        if appState.isRecording && appState.isCameraOnlyRecording {
+            await stopCameraOnlyRecording()
+        } else if !appState.isRecording {
+            await startCameraOnlyRecording()
+        }
+    }
+
+    func startCameraOnlyRecording() async {
+        guard !appState.isRecording else { return }
+
+        if !isSetUp { await setup() }
+
+        // 1. Request camera permission
+        let cameraGranted = await PermissionManager.shared.requestCameraPermission()
+        appState.hasCameraPermission = cameraGranted
+        guard cameraGranted else {
+            print("❌ Camera permission denied — cannot record camera-only")
+            return
+        }
+
+        // 2. Request microphone if enabled
+        let includeMic = appState.isMicrophoneEnabled
+        if includeMic {
+            let micGranted = await PermissionManager.shared.requestMicrophonePermission()
+            appState.hasMicrophonePermission = micGranted
+            if !micGranted { appState.isMicrophoneEnabled = false }
+        }
+
+        // 3. Start camera WITH microphone in the same session
+        do {
+            try cameraManager.startCamera(includeMicrophone: appState.isMicrophoneEnabled)
+            print("  ✅ Camera started for camera-only recording")
+
+            // Show camera preview so user can see themselves
+            overlayManager.showCamera()
+            print("  ✅ Camera preview shown")
+
+            // Give camera 300ms to start producing frames
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        } catch {
+            print("❌ Camera failed to start: \(error)")
+            return
+        }
+
+        // 4. Countdown
+        appState.isCountingDown = true
+        print("  ⏱ Showing countdown overlay...")
+        await overlayManager.showCountdown(appState: appState)
+        appState.isCountingDown = false
+
+        // 5. Determine camera resolution from the actual capture session
+        let cameraResolution = getCameraResolution()
+        let videoWidth = cameraResolution.width
+        let videoHeight = cameraResolution.height
+
+        let outputURL = appState.generateCameraOutputURL()
+        appState.currentRecordingURL = outputURL
+
+        print("🎬 Starting camera-only recording to: \(outputURL.lastPathComponent)")
+        print("  📐 Camera resolution: \(videoWidth)x\(videoHeight)")
+
+        do {
+            // 6. Setup camera writer
+            let writer = CameraWriter(outputURL: outputURL, format: appState.outputFormat)
+            try writer.setup(
+                videoWidth: videoWidth,
+                videoHeight: videoHeight,
+                includeMicrophone: appState.isMicrophoneEnabled
+            )
+            try writer.startWriting()
+            cameraWriter = writer
+
+            // 7. Wire camera frames directly to writer
+            cameraManager.onSampleBuffer = { [weak writer] sampleBuffer in
+                writer?.appendVideoBuffer(sampleBuffer)
+            }
+
+            // 8. Wire microphone audio from camera session to writer
+            if appState.isMicrophoneEnabled {
+                cameraManager.onAudioSampleBuffer = { [weak writer, weak self] buffer in
+                    guard let self = self else { return }
+                    let volume = self.appState.micVolume
+                    guard !self.appState.isMicMuted, volume > 0 else { return }
+
+                    if volume != 5 {
+                        let gain = Float(volume) / 5.0
+                        writer?.appendMicBuffer(buffer, gain: gain)
+                    } else {
+                        writer?.appendMicBuffer(buffer)
+                    }
+                }
+                print("  🎤 Microphone wired to camera writer")
+            }
+
+            // 9. Wire camera position tracking for preview dragging
+            overlayManager.onCameraPositionChanged = { _ in
+                // No-op for camera-only — position only matters for screen compositing
+            }
+
+            // 10. Start keystroke monitor if enabled
+            if appState.isKeystrokeOverlayEnabled {
+                startKeystrokeMonitorWithPermissionCheck()
+            }
+
+            // 11. Mark as recording
+            appState.isRecording = true
+            appState.isCameraOnlyRecording = true
+            appState.startRecordingTimer()
+
+            print("🔴 Camera-only recording in progress!")
+
+        } catch {
+            print("❌ Failed to start camera-only recording: \(error)")
+            appState.isCountingDown = false
+            cameraManager.stopCamera()
+            overlayManager.destroyCameraWindow()
+        }
+    }
+
+    func stopCameraOnlyRecording() async {
+        guard appState.isRecording, appState.isCameraOnlyRecording else { return }
+
+        print("⏹ Stopping camera-only recording...")
+
+        appState.isRecording = false
+        appState.isCameraOnlyRecording = false
+        appState.isPaused = false
+        appState.stopRecordingTimer()
+
+        // 1. Stop camera & destroy preview
+        cameraManager.stopCamera()
+        cameraManager.onSampleBuffer = nil
+        cameraManager.onAudioSampleBuffer = nil
+        overlayManager.destroyCameraWindow()
+
+        // 2. Stop keystroke monitor if not user-enabled
+        if !appState.isKeystrokeOverlayEnabled {
+            keystrokeMonitor.stopMonitoring()
+        }
+
+        // 3. Drain buffers
+        try? await Task.sleep(nanoseconds: 200_000_000)
+
+        // 4. Finalize video
+        if let writer = cameraWriter {
+            do {
+                let url = try await writer.stopWriting()
+                print("✅ Camera recording saved to: \(url.path)")
+
+                // Share-optimized export (if enabled)
+                if appState.isShareOptimizedExportEnabled {
+                    let shareURL = ShareOptimizedExporter.shareOutputURL(for: url)
+                    print("📤 Share-optimized export enabled — exporting to \(shareURL.lastPathComponent)...")
+                    do {
+                        let exportedURL = try await ShareOptimizedExporter.export(sourceURL: url, outputURL: shareURL)
+                        print("✅ Share-optimized file ready: \(exportedURL.path)")
+                        NSWorkspace.shared.activateFileViewerSelecting([exportedURL])
+                    } catch {
+                        print("⚠️ Share-optimized export failed: \(error.localizedDescription)")
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
+                } else {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+            } catch {
+                print("❌ Failed to save camera recording: \(error)")
+            }
+        }
+
+        cameraWriter = nil
+    }
+
+    /// Get camera capture resolution from the active session
+    private func getCameraResolution() -> (width: Int, height: Int) {
+        guard let camera = cameraManager.selectedCamera else {
+            return (width: 1920, height: 1080) // Default fallback
+        }
+        let format = camera.activeFormat
+        let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        return (width: Int(dimensions.width), height: Int(dimensions.height))
     }
 
     // MARK: - Toggle Camera

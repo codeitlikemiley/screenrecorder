@@ -78,6 +78,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     await coordinator?.toggleRecording()
                 }
             }
+            manager.onToggleCameraRecording = { [weak coordinator] in
+                Task { @MainActor in
+                    await coordinator?.toggleCameraRecording()
+                }
+            }
             manager.onToggleCamera = { [weak coordinator] in
                 coordinator?.toggleCamera()
             }

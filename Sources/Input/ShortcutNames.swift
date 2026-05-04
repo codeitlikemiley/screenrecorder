@@ -6,6 +6,7 @@ import KeyboardShortcuts
 extension KeyboardShortcuts.Name {
     static let toggleRecording = Self("toggleRecording", default: .init(.four, modifiers: [.command, .shift]))
     static let toggleRecordingAlt = Self("toggleRecordingAlt", default: .init(.s, modifiers: [.command, .shift]))
+    static let toggleCameraRecording = Self("toggleCameraRecording", default: .init(.w, modifiers: [.command, .shift]))
     static let toggleCamera = Self("toggleCamera", default: .init(.c, modifiers: [.command, .shift]))
     static let toggleMicrophone = Self("toggleMicrophone", default: .init(.m, modifiers: [.command, .shift]))
     static let toggleKeystrokeOverlay = Self("toggleKeystrokeOverlay", default: .init(.k, modifiers: [.command, .shift]))
@@ -36,6 +37,7 @@ extension KeyboardShortcuts.Name: @retroactive CaseIterable {
     public static let allCases: [Self] = [
         .toggleRecording,
         .toggleRecordingAlt,
+        .toggleCameraRecording,
         .toggleCamera,
         .toggleMicrophone,
         .toggleKeystrokeOverlay,
@@ -67,6 +69,7 @@ extension KeyboardShortcuts.Name {
     private static let labels: [String: String] = [
         "toggleRecording": "Start / Stop Recording",
         "toggleRecordingAlt": "Start / Stop Recording (Alt)",
+        "toggleCameraRecording": "Start / Stop Camera Recording",
         "toggleCamera": "Toggle Camera",
         "toggleMicrophone": "Toggle Microphone",
         "toggleKeystrokeOverlay": "Toggle Keystroke Overlay",

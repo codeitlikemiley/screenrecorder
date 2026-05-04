@@ -14,6 +14,7 @@ final class GlobalHotkeyManager {
 
     // Callbacks wired by AppDelegate
     var onToggleRecording: (() -> Void)?
+    var onToggleCameraRecording: (() -> Void)?
     var onToggleCamera: (() -> Void)?
     var onToggleKeystrokeMonitor: (() -> Void)?
     var onOpenRecordingsFolder: (() -> Void)?
@@ -35,6 +36,11 @@ final class GlobalHotkeyManager {
         // ⌘⇧S — Start/Stop Recording (Alt fallback)
         KeyboardShortcuts.onKeyDown(for: .toggleRecordingAlt) { [weak self] in
             self?.onToggleRecording?()
+        }
+
+        // ⌘⇧W — Start/Stop Camera-Only Recording
+        KeyboardShortcuts.onKeyDown(for: .toggleCameraRecording) { [weak self] in
+            self?.onToggleCameraRecording?()
         }
 
         // ⌘⇧K — Toggle Keystroke Overlay

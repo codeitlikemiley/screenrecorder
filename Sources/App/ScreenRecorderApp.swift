@@ -78,13 +78,23 @@ struct MenuBarView: View {
                     Text("Starting in \(appState.countdownValue)...")
                 }
             } else if appState.isRecording {
-
-                Button("⏹ Stop Recording  ⌘⇧S") {
-                    Task { await coordinator.stopRecording() }
+                if appState.isCameraOnlyRecording {
+                    Button("⏹ Stop Camera Recording  ⌘⇧W") {
+                        Task { await coordinator.stopCameraOnlyRecording() }
+                    }
+                } else {
+                    Button("⏹ Stop Recording  ⌘⇧S") {
+                        Task { await coordinator.stopRecording() }
+                    }
                 }
             } else {
                 Button("⏺ Start Recording  ⌘⇧S") {
                     Task { await coordinator.startRecording() }
+                }
+                .disabled(!isLicensed)
+
+                Button("📹 Record Camera Only  ⌘⇧W") {
+                    Task { await coordinator.startCameraOnlyRecording() }
                 }
                 .disabled(!isLicensed)
             }

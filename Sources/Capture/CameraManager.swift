@@ -4,11 +4,14 @@ import AppKit
 
 /// Manages camera capture using AVFoundation.
 /// Provides live camera frames as CMSampleBuffers for compositing and preview.
+/// Optionally captures microphone audio in the same session (for camera-only recording).
 @MainActor
 class CameraManager: NSObject, ObservableObject {
     private(set) var captureSession: AVCaptureSession?
     private var videoOutput: AVCaptureVideoDataOutput?
+    private var audioOutput: AVCaptureAudioDataOutput?
     private var videoDelegate: CameraOutputDelegate?
+    private var audioDelegate: AudioOutputDelegate?
     private var interruptionObserver: NSObjectProtocol?
     private var resumeObserver: NSObjectProtocol?
 
@@ -19,6 +22,7 @@ class CameraManager: NSObject, ObservableObject {
     @Published var isInterrupted = false
 
     var onSampleBuffer: ((CMSampleBuffer) -> Void)?
+    var onAudioSampleBuffer: ((CMSampleBuffer) -> Void)?
 
     // MARK: - Setup
 
@@ -34,19 +38,21 @@ class CameraManager: NSObject, ObservableObject {
 
     // MARK: - Start Camera
 
-    func startCamera() throws {
+    /// Start camera capture, optionally including microphone audio.
+    /// - Parameter includeMicrophone: If true, also captures mic audio in the same session.
+    func startCamera(includeMicrophone: Bool = false) throws {
         guard let camera = selectedCamera else { return }
 
         let session = AVCaptureSession()
         session.sessionPreset = .high
 
-        // Add input
+        // Add video input
         let input = try AVCaptureDeviceInput(device: camera)
         if session.canAddInput(input) {
             session.addInput(input)
         }
 
-        // Add output
+        // Add video output
         let output = AVCaptureVideoDataOutput()
         output.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
@@ -65,6 +71,37 @@ class CameraManager: NSObject, ObservableObject {
         captureSession = session
         videoOutput = output
         videoDelegate = delegate
+
+        // Add microphone input + output if requested (for camera-only recording)
+        if includeMicrophone {
+            if let mic = AVCaptureDevice.default(for: .audio) {
+                do {
+                    let micInput = try AVCaptureDeviceInput(device: mic)
+                    if session.canAddInput(micInput) {
+                        session.addInput(micInput)
+                    }
+
+                    let audioOut = AVCaptureAudioDataOutput()
+                    let audioDel = AudioOutputDelegate()
+                    audioDel.onAudioBuffer = { [weak self] buffer in
+                        self?.onAudioSampleBuffer?(buffer)
+                    }
+                    audioOut.setSampleBufferDelegate(audioDel, queue: DispatchQueue(label: "com.screenrecorder.camera.audio", qos: .userInitiated))
+
+                    if session.canAddOutput(audioOut) {
+                        session.addOutput(audioOut)
+                    }
+
+                    audioOutput = audioOut
+                    audioDelegate = audioDel
+                    print("  🎤 Microphone added to camera session")
+                } catch {
+                    print("  ⚠️ Failed to add microphone to camera session: \(error)")
+                }
+            } else {
+                print("  ⚠️ No microphone device found")
+            }
+        }
 
         // Listen for session interruptions (Presenter Overlay, other apps stealing camera)
         interruptionObserver = NotificationCenter.default.addObserver(
@@ -112,7 +149,9 @@ class CameraManager: NSObject, ObservableObject {
         captureSession?.stopRunning()
         captureSession = nil
         videoOutput = nil
+        audioOutput = nil
         videoDelegate = nil
+        audioDelegate = nil
         isRunning = false
         isInterrupted = false
     }
@@ -134,5 +173,15 @@ private class CameraOutputDelegate: NSObject, AVCaptureVideoDataOutputSampleBuff
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         onSampleBuffer?(sampleBuffer)
+    }
+}
+
+// MARK: - Audio Output Delegate
+
+private class AudioOutputDelegate: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
+    var onAudioBuffer: ((CMSampleBuffer) -> Void)?
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        onAudioBuffer?(sampleBuffer)
     }
 }

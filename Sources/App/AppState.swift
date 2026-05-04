@@ -22,6 +22,7 @@ class AppState: ObservableObject {
 
     // MARK: - Recording State (runtime only, NOT persisted)
     @Published var isRecording = false
+    @Published var isCameraOnlyRecording = false  // True when recording camera-only (no screen)
     @Published var isPaused = false
     @Published var recordingDuration: TimeInterval = 0
     @Published var isCountingDown = false
@@ -264,6 +265,14 @@ class AppState: ObservableObject {
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let timestamp = formatter.string(from: Date())
         let filename = "Recording_\(timestamp).\(outputFormat.fileExtension)"
+        return saveDirectory.appendingPathComponent(filename)
+    }
+
+    func generateCameraOutputURL() -> URL {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let timestamp = formatter.string(from: Date())
+        let filename = "Camera_\(timestamp).\(outputFormat.fileExtension)"
         return saveDirectory.appendingPathComponent(filename)
     }
 
