@@ -185,6 +185,14 @@ private class CaptureStreamOutput: NSObject, SCStreamOutput {
 
         switch type {
         case .screen:
+            if let attachmentsArray = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+               let attachments = attachmentsArray.first,
+               let statusRaw = attachments[.status] as? Int,
+               let status = SCFrameStatus(rawValue: statusRaw) {
+                if status == .blank || status == .suspended || status == .stopped {
+                    return
+                }
+            }
             onVideoSampleBuffer?(sampleBuffer)
         case .audio:
             onAudioSampleBuffer?(sampleBuffer)

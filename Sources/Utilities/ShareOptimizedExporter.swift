@@ -54,7 +54,7 @@ struct ShareOptimizedExporter {
         // Audio mix: if multiple audio tracks exist, balance them so both are audible
         // in the final single-track output. AVAssetExportSession flattens multiple
         // tracks into a single stereo mix when an audioMix is applied.
-        if let audioMix = createAudioMix(for: asset) {
+        if let audioMix = await createAudioMix(for: asset) {
             session.audioMix = audioMix
         }
 
@@ -90,8 +90,8 @@ struct ShareOptimizedExporter {
     /// Creates an audio mix that ensures all audio tracks are audible in the exported mix.
     /// This also encourages the exporter to produce a single mixed audio track instead of
     /// preserving separate tracks.
-    private static func createAudioMix(for asset: AVAsset) -> AVMutableAudioMix? {
-        guard let audioTracks = try? asset.loadTracks(withMediaType: .audio),
+    private static func createAudioMix(for asset: AVAsset) async -> AVMutableAudioMix? {
+        guard let audioTracks = try? await asset.loadTracks(withMediaType: .audio),
               audioTracks.count > 1 else {
             // Single track — no mix needed
             return nil

@@ -33,6 +33,12 @@ class VideoWriter {
     /// Updated by OverlayWindowManager when user drags the camera window
     var cameraPositionNormalized: CGPoint = CGPoint(x: 0.9, y: 0.1)  // Default: bottom-right
 
+    // Black-frame detection: caches the last non-black frame so we can
+    // substitute it when the compositor sends all-black content (e.g.
+    // AeroSpace moving windows off-screen during workspace switches).
+    private var lastGoodPixelBuffer: CVPixelBuffer?
+    private var consecutiveBlackFrames: Int = 0
+
     // Serial queue for thread-safe buffer appending
     private let writerQueue = DispatchQueue(label: "com.screenrecorder.writer", qos: .userInitiated)
 
@@ -185,10 +191,36 @@ class VideoWriter {
                 return
             }
 
+            // --- Black-frame detection ---
+            // AeroSpace (and similar tiling WMs) move windows off-screen when
+            // switching workspaces. ScreenCaptureKit still delivers frames with
+            // status .complete, but the pixel content is all-black. Detect this
+            // and substitute the last known-good frame to create a freeze-frame
+            // effect instead of recording black.
+            var bufferToWrite = screenPixelBuffer
+            if isFrameBlack(screenPixelBuffer) {
+                consecutiveBlackFrames += 1
+                if let lastGood = lastGoodPixelBuffer {
+                    bufferToWrite = lastGood
+                    if consecutiveBlackFrames == 1 {
+                        print("  ⏸️ Black frame detected — substituting last good frame (workspace switch?)")
+                    }
+                }
+                // If we have no last-good frame yet (recording just started),
+                // fall through and write the black frame — nothing else we can do.
+            } else {
+                if consecutiveBlackFrames > 0 {
+                    print("  ▶️ Content restored after \(consecutiveBlackFrames) black frames")
+                }
+                consecutiveBlackFrames = 0
+                lastGoodPixelBuffer = screenPixelBuffer
+                bufferToWrite = screenPixelBuffer
+            }
+
             // Composite camera if enabled and we have a camera frame
-            var finalPixelBuffer = screenPixelBuffer
+            var finalPixelBuffer = bufferToWrite
             if isCameraEnabled, let cameraBuffer = latestCameraPixelBuffer, let ctx = ciContext {
-                if let composited = compositeCamera(screenBuffer: screenPixelBuffer, cameraBuffer: cameraBuffer, context: ctx) {
+                if let composited = compositeCamera(screenBuffer: bufferToWrite, cameraBuffer: cameraBuffer, context: ctx) {
                     finalPixelBuffer = composited
                 }
             }
@@ -206,6 +238,53 @@ class VideoWriter {
                 }
             }
         }
+    }
+
+    // MARK: - Black Frame Detection
+
+    /// Samples 9 pixels in a 3×3 grid across the frame. If ALL sampled pixels
+    /// have R, G, and B channels below `threshold`, the frame is considered black.
+    /// This is extremely fast — only 9 pixel reads regardless of resolution.
+    private func isFrameBlack(_ pixelBuffer: CVPixelBuffer, threshold: UInt8 = 10) -> Bool {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return true }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+
+        // Don't check tiny/degenerate buffers
+        guard width > 4, height > 4 else { return true }
+
+        // 3×3 grid of sample points, avoiding the very edges
+        let samplePoints: [(Int, Int)] = [
+            (width / 4,     height / 4),
+            (width / 2,     height / 4),
+            (3 * width / 4, height / 4),
+            (width / 4,     height / 2),
+            (width / 2,     height / 2),
+            (3 * width / 4, height / 2),
+            (width / 4,     3 * height / 4),
+            (width / 2,     3 * height / 4),
+            (3 * width / 4, 3 * height / 4),
+        ]
+
+        let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
+
+        for (x, y) in samplePoints {
+            let offset = y * bytesPerRow + x * 4  // BGRA = 4 bytes per pixel
+            let b = ptr[offset]
+            let g = ptr[offset + 1]
+            let r = ptr[offset + 2]
+            // If ANY sample pixel has visible content, the frame is not black
+            if r > threshold || g > threshold || b > threshold {
+                return false
+            }
+        }
+
+        return true
     }
 
     func appendAudioBuffer(_ sampleBuffer: CMSampleBuffer) {
@@ -402,7 +481,11 @@ class VideoWriter {
 
         isWriting = false
 
-        print("  📝 Finalizing... (\(frameCount) frames written)")
+        print("  📝 Finalizing... (\(frameCount) frames written, \(consecutiveBlackFrames > 0 ? "\(consecutiveBlackFrames) trailing black frames suppressed" : "no black frames detected"))")
+
+        // Release cached frame buffer
+        lastGoodPixelBuffer = nil
+        consecutiveBlackFrames = 0
 
         // Wait for pending operations
         writerQueue.sync { /* drain */ }

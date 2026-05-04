@@ -113,6 +113,24 @@ class AgentRouter {
             return try await inputClickElement(params: params)
         case "input.type_to_field":
             return try await inputTypeToField(params: params)
+        case "input.ax_click":
+            return try await inputAxClick(params: params)
+        case "input.ax_type":
+            return try await inputAxType(params: params)
+        case "input.ax_focus":
+            return try await inputAxFocus(params: params)
+        case "input.ax_scroll":
+            return try await inputAxScroll(params: params)
+        case "input.ax_pick":
+            return try await inputAxPick(params: params)
+        case "input.ax_toggle":
+            return try await inputAxToggle(params: params)
+        case "input.ax_increment":
+            return try await inputAxIncrement(params: params)
+        case "input.ax_decrement":
+            return try await inputAxDecrement(params: params)
+        case "ax.element_at_point":
+            return try axElementAtPoint(params: params)
 
         // App control
         case "app.launch":
@@ -1681,6 +1699,16 @@ class AgentRouter {
     }
 
     // MARK: - App Control
+
+    private func inputAxClick(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
+    private func inputAxType(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
+    private func inputAxFocus(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
+    private func inputAxScroll(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
+    private func inputAxPick(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
+    private func inputAxToggle(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
+    private func inputAxIncrement(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
+    private func inputAxDecrement(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
+    private func axElementAtPoint(params: [String: Any]?) throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
 
     private func launchApp(params: [String: Any]?) throws -> [String: Any] {
         guard let name = params?["name"] as? String else {

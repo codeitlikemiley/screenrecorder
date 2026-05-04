@@ -353,23 +353,24 @@ class RecordingCoordinator: ObservableObject {
                     print("  ℹ️ Normal mode — video saved, no AI processing")
                 }
 
-                NSWorkspace.shared.activateFileViewerSelecting([url])
+                // Share-optimized export (if enabled)
+                if appState.isShareOptimizedExportEnabled {
+                    let shareURL = ShareOptimizedExporter.shareOutputURL(for: url)
+                    print("📤 Share-optimized export enabled — exporting to \(shareURL.lastPathComponent)...")
+                    do {
+                        let exportedURL = try await ShareOptimizedExporter.export(sourceURL: url, outputURL: shareURL)
+                        print("✅ Share-optimized file ready: \(exportedURL.path)")
+                        // Open the share-optimized file in Finder instead of the original
+                        NSWorkspace.shared.activateFileViewerSelecting([exportedURL])
+                    } catch {
+                        print("⚠️ Share-optimized export failed: \(error.localizedDescription)")
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
+                } else {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
             } catch {
                 print("❌ Failed to save recording: \(error)")
-            }
-
-            // Share-optimized export (if enabled)
-            if appState.isShareOptimizedExportEnabled {
-                let shareURL = ShareOptimizedExporter.shareOutputURL(for: url)
-                print("📤 Share-optimized export enabled — exporting to \(shareURL.lastPathComponent)...")
-                do {
-                    let exportedURL = try await ShareOptimizedExporter.export(sourceURL: url, outputURL: shareURL)
-                    print("✅ Share-optimized file ready: \(exportedURL.path)")
-                    // Open the share-optimized file in Finder instead of the original
-                    NSWorkspace.shared.activateFileViewerSelecting([exportedURL])
-                } catch {
-                    print("⚠️ Share-optimized export failed: \(error.localizedDescription)")
-                }
             }
         }
 
