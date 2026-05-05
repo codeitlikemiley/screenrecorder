@@ -49,12 +49,12 @@ struct CameraPreviewRepresentable: NSViewRepresentable {
 
     func makeNSView(context: Context) -> CameraPreviewNSView {
         let view = CameraPreviewNSView()
-        view.setSession(cameraManager.captureSession)
+        view.setPreviewLayer(cameraManager.videoPreviewLayer)
         return view
     }
 
     func updateNSView(_ nsView: CameraPreviewNSView, context: Context) {
-        nsView.setSession(cameraManager.captureSession)
+        nsView.setPreviewLayer(cameraManager.videoPreviewLayer)
     }
 }
 
@@ -73,15 +73,15 @@ class CameraPreviewNSView: NSView {
         wantsLayer = true
     }
 
-    func setSession(_ session: AVCaptureSession?) {
+    func setPreviewLayer(_ layer: AVCaptureVideoPreviewLayer?) {
+        if previewLayer === layer { return } // Already set
+
         // Remove old layer
         previewLayer?.removeFromSuperlayer()
         previewLayer = nil
 
-        guard let session = session else { return }
+        guard let layer = layer else { return }
 
-        let layer = AVCaptureVideoPreviewLayer(session: session)
-        layer.videoGravity = .resizeAspectFill
         layer.cornerRadius = bounds.width / 2
         layer.masksToBounds = true
 

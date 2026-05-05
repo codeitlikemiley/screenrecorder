@@ -8,6 +8,7 @@ import AppKit
 @MainActor
 class CameraManager: NSObject, ObservableObject {
     private(set) var captureSession: AVCaptureSession?
+    private(set) var videoPreviewLayer: AVCaptureVideoPreviewLayer?
     private var videoOutput: AVCaptureVideoDataOutput?
     private var audioOutput: AVCaptureAudioDataOutput?
     private var videoDelegate: CameraOutputDelegate?
@@ -68,7 +69,12 @@ class CameraManager: NSObject, ObservableObject {
             session.addOutput(output)
         }
 
+        // Create preview layer synchronously BEFORE startRunning to avoid mutation crash
+        let preview = AVCaptureVideoPreviewLayer(session: session)
+        preview.videoGravity = .resizeAspectFill
+
         captureSession = session
+        videoPreviewLayer = preview
         videoOutput = output
         videoDelegate = delegate
 
@@ -148,6 +154,7 @@ class CameraManager: NSObject, ObservableObject {
         }
         captureSession?.stopRunning()
         captureSession = nil
+        videoPreviewLayer = nil
         videoOutput = nil
         audioOutput = nil
         videoDelegate = nil
@@ -159,10 +166,7 @@ class CameraManager: NSObject, ObservableObject {
     // MARK: - Get Preview Layer
 
     func previewLayer() -> AVCaptureVideoPreviewLayer? {
-        guard let session = captureSession else { return nil }
-        let layer = AVCaptureVideoPreviewLayer(session: session)
-        layer.videoGravity = .resizeAspectFill
-        return layer
+        return videoPreviewLayer
     }
 }
 

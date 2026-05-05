@@ -30,6 +30,14 @@ extension KeyboardShortcuts.Name {
     static let toolMove = Self("toolMove", default: .init(.seven, modifiers: [.command]))
     static let annotationUndo = Self("annotationUndo", default: .init(.z, modifiers: [.command]))
     static let annotationRedo = Self("annotationRedo", default: .init(.z, modifiers: [.command, .shift]))
+
+    // Teleprompter
+    static let teleprompterPrevSlide = Self("teleprompterPrevSlide", default: .init(.f1, modifiers: [.command]))
+    static let teleprompterNextSlide = Self("teleprompterNextSlide", default: .init(.f2, modifiers: [.command]))
+    static let toggleTeleprompter = Self("toggleTeleprompter", default: .init(.f4, modifiers: [.command]))
+    static let teleprompterEditScript = Self("teleprompterEditScript", default: .init(.f5, modifiers: [.command]))
+    static let teleprompterFontUp = Self("teleprompterFontUp", default: .init(.equal, modifiers: [.command, .option]))
+    static let teleprompterFontDown = Self("teleprompterFontDown", default: .init(.minus, modifiers: [.command, .option]))
 }
 
 /// CaseIterable conformance for enumerating all shortcuts in Settings UI.
@@ -61,6 +69,12 @@ extension KeyboardShortcuts.Name: @retroactive CaseIterable {
         .toolMove,
         .annotationUndo,
         .annotationRedo,
+        .teleprompterPrevSlide,
+        .teleprompterNextSlide,
+        .toggleTeleprompter,
+        .teleprompterEditScript,
+        .teleprompterFontUp,
+        .teleprompterFontDown,
     ]
 }
 
@@ -93,6 +107,12 @@ extension KeyboardShortcuts.Name {
         "toolMove": "Move Tool",
         "annotationUndo": "Undo Annotation",
         "annotationRedo": "Redo Annotation",
+        "teleprompterPrevSlide": "Teleprompter Previous Slide",
+        "teleprompterNextSlide": "Teleprompter Next Slide",
+        "toggleTeleprompter": "Show / Hide Teleprompter",
+        "teleprompterEditScript": "Edit Teleprompter Script",
+        "teleprompterFontUp": "Teleprompter Font Size Up",
+        "teleprompterFontDown": "Teleprompter Font Size Down",
     ]
 
     var label: String {

@@ -177,6 +177,46 @@ struct MenuBarView: View {
             }
             .disabled(!isLicensed)
 
+            // Teleprompter
+            Divider()
+            Toggle("📜 Enable Teleprompter Service", isOn: Binding(
+                get: { appState.isTeleprompterEnabled },
+                set: { newValue in
+                    appState.isTeleprompterEnabled = newValue
+                    coordinator.toggleTeleprompterService()
+                }
+            ))
+            .disabled(!isLicensed)
+
+            if appState.isTeleprompterEnabled {
+                Button(coordinator.overlayManager.isTeleprompterVisible
+                    ? "👁 Hide Teleprompter  ⌘F4"
+                    : "👁 Show Teleprompter  ⌘F4"
+                ) {
+                    coordinator.toggleTeleprompterVisibility()
+                }
+            }
+
+            // Edit Script — always accessible (independent of overlay visibility)
+            Button("📝 Edit Script  ⌘F5") {
+                coordinator.toggleEditScript()
+            }
+            .disabled(!isLicensed)
+
+            if appState.isTeleprompterEnabled && appState.teleprompterSettings.mode == .manual {
+                HStack {
+                    Button("◀ Prev  ⌘F1") {
+                        coordinator.teleprompterPrevSlide()
+                    }
+                    .disabled(appState.autoScrollController.isFirstSlide)
+
+                    Button("Next ▶  ⌘F2") {
+                        coordinator.teleprompterNextSlide()
+                    }
+                    .disabled(appState.autoScrollController.isLastSlide)
+                }
+            }
+
             Divider()
 
             Button("📂 Open Recordings  ⌘⇧F") {
@@ -199,5 +239,9 @@ struct MenuBarView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
             openSettings()
         }
+    }
+
+    private var scrollControllerState: AutoScrollController.ScrollState {
+        appState.autoScrollController.state
     }
 }

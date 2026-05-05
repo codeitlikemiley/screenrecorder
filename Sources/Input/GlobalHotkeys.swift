@@ -24,6 +24,10 @@ final class GlobalHotkeyManager {
     var onToggleAnnotation: (() -> Void)?
     var onClearAnnotations: (() -> Void)?
     var onAnnotationScreenshot: (() -> Void)?
+    var onToggleTeleprompter: (() -> Void)?
+    var onTeleprompterPrevSlide: (() -> Void)?
+    var onTeleprompterNextSlide: (() -> Void)?
+    var onTeleprompterEditScript: (() -> Void)?
 
     // MARK: - Register (always-on hotkeys)
 
@@ -136,9 +140,18 @@ final class GlobalHotkeyManager {
             self?.onToggleAnnotation?()
         }
 
-        // NOTE: Annotation-only shortcuts (tools, undo/redo, clear, screenshot) are
-        // registered separately via registerAnnotationHotkeys() and only active
-        // while annotation mode is on. They must NOT be registered here.
+        // ⌘F4 — Toggle Teleprompter (always global)
+        KeyboardShortcuts.onKeyDown(for: .toggleTeleprompter) { [weak self] in
+            self?.onToggleTeleprompter?()
+        }
+
+        // ⌘F5 — Edit Script (always global)
+        KeyboardShortcuts.onKeyDown(for: .teleprompterEditScript) { [weak self] in
+            self?.onTeleprompterEditScript?()
+        }
+
+        // NOTE: Annotation-only and teleprompter-only shortcuts are
+        // registered separately and only active while their mode is on.
     }
 
     // MARK: - Annotation-scoped hotkeys (only active during annotation mode)
@@ -216,6 +229,41 @@ final class GlobalHotkeyManager {
         KeyboardShortcuts.removeHandler(for: .toolMove)
         KeyboardShortcuts.removeHandler(for: .annotationUndo)
         KeyboardShortcuts.removeHandler(for: .annotationRedo)
+    }
+
+    // MARK: - Teleprompter-scoped hotkeys (only active when teleprompter is visible)
+
+    /// Call this when the teleprompter becomes visible.
+    func registerTeleprompterHotkeys() {
+        // ⌘F1 — Previous Slide
+        KeyboardShortcuts.onKeyDown(for: .teleprompterPrevSlide) { [weak self] in
+            self?.onTeleprompterPrevSlide?()
+        }
+
+        // ⌘F2 — Next Slide
+        KeyboardShortcuts.onKeyDown(for: .teleprompterNextSlide) { [weak self] in
+            self?.onTeleprompterNextSlide?()
+        }
+
+        // ⌘⌥+ — Increase font size
+        KeyboardShortcuts.onKeyDown(for: .teleprompterFontUp) { [weak self] in
+            guard let self, let state = self.appState else { return }
+            state.teleprompterSettings.fontSize = min(80, state.teleprompterSettings.fontSize + 2)
+        }
+
+        // ⌘⌥- — Decrease font size
+        KeyboardShortcuts.onKeyDown(for: .teleprompterFontDown) { [weak self] in
+            guard let self, let state = self.appState else { return }
+            state.teleprompterSettings.fontSize = max(16, state.teleprompterSettings.fontSize - 2)
+        }
+    }
+
+    /// Call this when the teleprompter is hidden.
+    func unregisterTeleprompterHotkeys() {
+        KeyboardShortcuts.removeHandler(for: .teleprompterPrevSlide)
+        KeyboardShortcuts.removeHandler(for: .teleprompterNextSlide)
+        KeyboardShortcuts.removeHandler(for: .teleprompterFontUp)
+        KeyboardShortcuts.removeHandler(for: .teleprompterFontDown)
     }
 
     // MARK: - Unregister All

@@ -263,6 +263,62 @@ struct SettingsView: View {
                         }
                     }
 
+                    // Teleprompter Defaults
+                    settingsSection(title: "Teleprompter", icon: "text.justify.leading") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text("Default Mode")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 110, alignment: .leading)
+                                Picker("", selection: $appState.teleprompterSettings.mode) {
+                                    ForEach(TeleprompterMode.allCases) { mode in
+                                        Text(mode.displayName).tag(mode)
+                                    }
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.segmented)
+                            }
+
+                            HStack {
+                                Text("Default Font Size")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 110, alignment: .leading)
+                                Slider(value: $appState.teleprompterSettings.fontSize, in: 16...80, step: 2)
+                                    .frame(maxWidth: .infinity)
+                                Text("\(Int(appState.teleprompterSettings.fontSize))pt")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 40, alignment: .trailing)
+                            }
+
+                            HStack {
+                                Text("Background")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 110, alignment: .leading)
+                                Picker("", selection: $appState.teleprompterSettings.backgroundStyle) {
+                                    ForEach(TeleprompterBackgroundStyle.allCases) { style in
+                                        Text(style.displayName).tag(style)
+                                    }
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.segmented)
+                            }
+
+                            Toggle("Exclude from Recording", isOn: $appState.teleprompterSettings.isExcludedFromRecording)
+                                .font(.system(size: 12))
+
+                            Toggle("Mirror Mode", isOn: $appState.teleprompterSettings.isMirrorMode)
+                                .font(.system(size: 12))
+
+                            Text("⌘F4 = Toggle teleprompter  ⌘F5 = Edit script  ⌘F1/F2 = Prev/Next slide")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
                     // AI Providers
                     settingsSection(title: "AI Providers", icon: "brain") {
                         AIProviderSettingsView(manager: aiManager)

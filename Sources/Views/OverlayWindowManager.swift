@@ -11,8 +11,12 @@ class OverlayWindowManager {
     private var cameraWindow: NSWindow?
     private var annotationWindow: NSWindow?
     private var annotationToolbarWindow: NSWindow?
+    private var teleprompterWindow: NSPanel?
+    private var teleprompterControlWindow: NSPanel?
     private var cancellables = Set<AnyCancellable>()
     private var windowMoveObserver: Any?
+    private var teleprompterMoveObserver: Any?
+    private var teleprompterResizeObserver: Any?
 
     /// Callback for annotation screenshot — set by RecordingCoordinator
     var onAnnotationScreenshot: (() -> Void)?
@@ -104,6 +108,26 @@ class OverlayWindowManager {
                 } else {
                     self?.annotationWindow?.alphaValue = 0.0
                 }
+            }
+            .store(in: &cancellables)
+
+        // Observe teleprompter toggle
+        appState.$isTeleprompterEnabled
+            .receive(on: RunLoop.main)
+            .sink { [weak self] enabled in
+                if enabled {
+                    self?.showTeleprompter()
+                } else {
+                    self?.hideTeleprompter()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Observe teleprompter settings changes that affect the window
+        appState.$teleprompterSettings
+            .receive(on: RunLoop.main)
+            .sink { [weak self] settings in
+                self?.applyTeleprompterSettings(settings)
             }
             .store(in: &cancellables)
     }
@@ -374,6 +398,7 @@ class OverlayWindowManager {
         annotationWindow = nil
         annotationToolbarWindow?.orderOut(nil)
         annotationToolbarWindow = nil
+        destroyTeleprompter()
         cancellables.removeAll()
     }
 
@@ -515,5 +540,228 @@ class OverlayWindowManager {
 
         window.contentView = hostingView
         annotationToolbarWindow = window
+    }
+
+    // MARK: - Teleprompter Overlay Window
+
+    func showTeleprompter() {
+        guard let appState = appState else { return }
+
+        if teleprompterWindow == nil {
+            createTeleprompterWindow(appState: appState)
+        }
+
+        teleprompterWindow?.orderFrontRegardless()
+    }
+
+    func hideTeleprompter() {
+        // Persist position before hiding
+        persistTeleprompterFrame()
+        teleprompterWindow?.orderOut(nil)
+        hideTeleprompterControls()
+    }
+
+    func destroyTeleprompter() {
+        if let obs = teleprompterMoveObserver {
+            NotificationCenter.default.removeObserver(obs)
+            teleprompterMoveObserver = nil
+        }
+        if let obs = teleprompterResizeObserver {
+            NotificationCenter.default.removeObserver(obs)
+            teleprompterResizeObserver = nil
+        }
+        persistTeleprompterFrame()
+        teleprompterWindow?.orderOut(nil)
+        teleprompterWindow = nil
+        hideTeleprompterControls()
+    }
+
+    func toggleTeleprompter() {
+        if teleprompterWindow?.isVisible == true {
+            hideTeleprompter()
+        } else {
+            showTeleprompter()
+        }
+    }
+
+    var isTeleprompterVisible: Bool {
+        teleprompterWindow?.isVisible ?? false
+    }
+
+    private func createTeleprompterWindow(appState: AppState) {
+        let settings = appState.teleprompterSettings
+        let frame = settings.windowFrame ?? defaultTeleprompterFrame()
+
+        let panel = NSPanel(
+            contentRect: frame,
+            styleMask: [.titled, .closable, .resizable, .nonactivatingPanel, .utilityWindow, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+
+        panel.level = settings.isAlwaysOnTop ? .floating : .normal
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.isMovableByWindowBackground = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isReleasedWhenClosed = false
+        panel.alphaValue = settings.opacity
+        panel.ignoresMouseEvents = settings.isClickThrough
+        panel.minSize = NSSize(width: 300, height: 200)
+
+        // Determine sharing type: demo mode overrides exclusion
+        panel.sharingType = Self.sharingType(for: settings)
+
+        // Clean title bar
+        panel.titlebarAppearsTransparent = true
+        panel.titleVisibility = .hidden
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
+
+        let overlayView = TeleprompterOverlayView(
+            appState: appState,
+            scrollController: appState.autoScrollController
+        )
+        let hostingView = NSHostingView(rootView: overlayView)
+        panel.contentView = hostingView
+
+        teleprompterWindow = panel
+
+        // Persist position on move
+        teleprompterMoveObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.persistTeleprompterFrame()
+            }
+        }
+
+        // Persist position on resize
+        teleprompterResizeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.persistTeleprompterFrame()
+            }
+        }
+    }
+
+    /// Apply live setting changes to the teleprompter window
+    private func applyTeleprompterSettings(_ settings: TeleprompterSettings) {
+        guard let panel = teleprompterWindow else { return }
+        panel.alphaValue = settings.opacity
+        panel.level = settings.isAlwaysOnTop ? .floating : .normal
+        panel.ignoresMouseEvents = settings.isClickThrough
+        panel.sharingType = Self.sharingType(for: settings)
+    }
+
+    /// Default frame: center of main screen, 420×600
+    private func defaultTeleprompterFrame() -> CGRect {
+        let screen = NSScreen.main ?? NSScreen.screens.first
+        let screenFrame = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let width: CGFloat = 420
+        let height: CGFloat = 600
+        let x = screenFrame.midX - width / 2
+        let y = screenFrame.midY - height / 2
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    /// Persist current teleprompter frame to settings
+    private func persistTeleprompterFrame() {
+        guard let panel = teleprompterWindow, let appState = appState else { return }
+        appState.teleprompterSettings.setWindowFrame(panel.frame)
+        if let screen = panel.screen {
+            appState.teleprompterSettings.lastScreenID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32
+        }
+    }
+
+    /// Compute correct NSWindowSharingType for a given set of settings.
+    /// Demo Mode (`isVisibleInRecordings`) takes priority and forces `.readOnly`.
+    static func sharingType(for settings: TeleprompterSettings) -> NSWindow.SharingType {
+        if settings.isVisibleInRecordings { return .readOnly }
+        return settings.isExcludedFromRecording ? .none : .readOnly
+    }
+
+    /// Update the live teleprompter panel's sharing type in-place.
+    /// Called when the user toggles "Exclude from Recording" or "Demo Mode".
+    func updateTeleprompterSharingType() {
+        guard let panel = teleprompterWindow, let appState = appState else { return }
+        panel.sharingType = Self.sharingType(for: appState.teleprompterSettings)
+    }
+
+    // MARK: - Teleprompter Control Panel
+
+    func showTeleprompterControls() {
+        guard let appState = appState else { return }
+
+        if teleprompterControlWindow == nil {
+            createTeleprompterControlWindow(appState: appState)
+        }
+
+        // Position: next to teleprompter window if visible, otherwise center on screen
+        if let teleWindow = teleprompterWindow, teleWindow.isVisible {
+            let x = teleWindow.frame.maxX + 12
+            let y = teleWindow.frame.midY - teleprompterControlWindow!.frame.height / 2
+            teleprompterControlWindow?.setFrameOrigin(NSPoint(x: x, y: y))
+        } else if teleprompterControlWindow?.isVisible != true {
+            teleprompterControlWindow?.center()
+        }
+
+        teleprompterControlWindow?.orderFrontRegardless()
+    }
+
+    func hideTeleprompterControls() {
+        teleprompterControlWindow?.orderOut(nil)
+    }
+
+    func toggleTeleprompterControls() {
+        if teleprompterControlWindow?.isVisible == true {
+            hideTeleprompterControls()
+        } else {
+            showTeleprompterControls()
+        }
+    }
+
+    private func createTeleprompterControlWindow(appState: AppState) {
+        let controlView = TeleprompterControlPanel(
+            appState: appState,
+            scrollController: appState.autoScrollController,
+            overlayManager: self,
+            onClose: { [weak self] in
+                self?.hideTeleprompterControls()
+            }
+        )
+
+        let hostingView = NSHostingView(rootView: controlView)
+        let contentSize = NSSize(width: 400, height: 720)
+
+        let panel = NSPanel(
+            contentRect: NSRect(origin: .zero, size: contentSize),
+            styleMask: [.titled, .closable, .nonactivatingPanel, .utilityWindow, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+
+        panel.level = .floating
+        panel.isOpaque = true
+        panel.backgroundColor = .windowBackgroundColor
+        panel.hasShadow = true
+        panel.isMovableByWindowBackground = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isReleasedWhenClosed = false
+        panel.sharingType = .readOnly  // Allow screenshots (only the overlay uses .none)
+
+        panel.titlebarAppearsTransparent = true
+        panel.titleVisibility = .hidden
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
+
+        panel.contentView = hostingView
+        teleprompterControlWindow = panel
     }
 }

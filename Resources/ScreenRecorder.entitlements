@@ -14,5 +14,8 @@
     <!-- Accessibility (CGEvent taps for keystroke monitoring) -->
     <key>com.apple.security.temporary-exception.apple-events</key>
     <true/>
+    <!-- Speech Recognition (SFSpeechRecognizer for Karaoke Auto mode) -->
+    <key>com.apple.security.speech-recognition</key>
+    <true/>
 </dict>
 </plist>

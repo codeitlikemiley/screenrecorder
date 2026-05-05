@@ -12,6 +12,7 @@ class AppState: ObservableObject {
         static let isCameraEnabled = "isCameraEnabled"
         static let isMicrophoneEnabled = "isMicrophoneEnabled"
         static let isKeystrokeOverlayEnabled = "isKeystrokeOverlayEnabled"
+        static let isTeleprompterEnabled = "isTeleprompterEnabled"
         static let outputFormat = "outputFormat"
         static let saveDirectory = "saveDirectory"
         static let frameRate = "frameRate"
@@ -45,6 +46,7 @@ class AppState: ObservableObject {
     // MARK: - Feature Toggles (persisted)
     @Published var isCameraEnabled = false
     @Published var isKeystrokeOverlayEnabled = false
+    @Published var isTeleprompterEnabled = false
     @Published var isControlBarVisible = true
     @Published var isMicrophoneEnabled = false
     @Published var isMicMuted = false           // During-recording mute (doesn't disable mic)
@@ -64,6 +66,11 @@ class AppState: ObservableObject {
     @Published var isAnnotationVisible = true       // Show/hide drawn content without losing data
     let annotationState = AnnotationState()         // Drawing data (strokes, tools, undo stack)
     var volumeOverlayWorkItem: DispatchWorkItem?
+
+    // MARK: - Teleprompter
+    @Published var teleprompterSettings = TeleprompterSettings()
+    @Published var teleprompterScript = TeleprompterScript()
+    let autoScrollController = AutoScrollController()
 
     // MARK: - Camera (persisted)
     @Published var cameraPosition: CGPoint = .zero // 0,0 means "default" (bottom-right)
@@ -101,6 +108,12 @@ class AppState: ObservableObject {
         // Load persisted settings
         loadSettings()
 
+        // Load teleprompter data
+        teleprompterSettings = TeleprompterSettingsStore.shared.load()
+        teleprompterScript = TeleprompterScript.loadFromDisk()
+        autoScrollController.mode = teleprompterSettings.mode
+        autoScrollController.slides = teleprompterScript.slides(maxWords: teleprompterSettings.maxWordsPerSlide)
+
         // Ensure save directory exists
         try? FileManager.default.createDirectory(at: saveDirectory, withIntermediateDirectories: true)
 
@@ -121,6 +134,9 @@ class AppState: ObservableObject {
         }
         if defaults.object(forKey: Keys.isKeystrokeOverlayEnabled) != nil {
             isKeystrokeOverlayEnabled = defaults.bool(forKey: Keys.isKeystrokeOverlayEnabled)
+        }
+        if defaults.object(forKey: Keys.isTeleprompterEnabled) != nil {
+            isTeleprompterEnabled = defaults.bool(forKey: Keys.isTeleprompterEnabled)
         }
         if let formatRaw = defaults.string(forKey: Keys.outputFormat),
            let format = OutputFormat(rawValue: formatRaw) {
@@ -150,6 +166,7 @@ class AppState: ObservableObject {
         defaults.set(isCameraEnabled, forKey: Keys.isCameraEnabled)
         defaults.set(isMicrophoneEnabled, forKey: Keys.isMicrophoneEnabled)
         defaults.set(isKeystrokeOverlayEnabled, forKey: Keys.isKeystrokeOverlayEnabled)
+        defaults.set(isTeleprompterEnabled, forKey: Keys.isTeleprompterEnabled)
         defaults.set(outputFormat.rawValue, forKey: Keys.outputFormat)
         defaults.set(saveDirectory.path, forKey: Keys.saveDirectory)
         defaults.set(frameRate, forKey: Keys.frameRate)
@@ -164,6 +181,7 @@ class AppState: ObservableObject {
             $isCameraEnabled.map { _ in () }.eraseToAnyPublisher(),
             $isMicrophoneEnabled.map { _ in () }.eraseToAnyPublisher(),
             $isKeystrokeOverlayEnabled.map { _ in () }.eraseToAnyPublisher(),
+            $isTeleprompterEnabled.map { _ in () }.eraseToAnyPublisher(),
             $outputFormat.map { _ in () }.eraseToAnyPublisher(),
             $saveDirectory.map { _ in () }.eraseToAnyPublisher(),
             $frameRate.map { _ in () }.eraseToAnyPublisher(),
@@ -176,6 +194,14 @@ class AppState: ObservableObject {
             self?.saveSettings()
         }
         .store(in: &saveCancellables)
+
+        // Auto-save teleprompter settings (separate from main settings)
+        $teleprompterSettings
+            .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
+            .sink { settings in
+                TeleprompterSettingsStore.shared.save(settings)
+            }
+            .store(in: &saveCancellables)
     }
 
     // MARK: - Mic Volume Control

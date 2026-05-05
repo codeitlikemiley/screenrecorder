@@ -11,6 +11,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: RecordingCoordinator?
     private var licenseCancellable: AnyCancellable?
     private var annotationModeCancellable: AnyCancellable?
+    private var teleprompterCancellable: AnyCancellable?
 
     nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
         Task { @MainActor in
@@ -61,6 +62,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     manager.unregisterAnnotationHotkeys()
                 }
             }
+
+        // Observe teleprompter visibility for scoped hotkeys
+        teleprompterCancellable = appState.$isTeleprompterEnabled
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] isEnabled in
+                guard let manager = self?.hotkeyManager else { return }
+                if isEnabled {
+                    manager.registerTeleprompterHotkeys()
+                } else {
+                    manager.unregisterTeleprompterHotkeys()
+                }
+            }
     }
 
     private func setupHotkeys() {
@@ -103,6 +117,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             manager.onAnnotationScreenshot = { [weak coordinator] in
                 coordinator?.captureAnnotationScreenshot()
+            }
+            manager.onToggleTeleprompter = { [weak coordinator] in
+                coordinator?.toggleTeleprompterVisibility()
+            }
+            manager.onTeleprompterPrevSlide = { [weak coordinator] in
+                coordinator?.teleprompterPrevSlide()
+            }
+            manager.onTeleprompterNextSlide = { [weak coordinator] in
+                coordinator?.teleprompterNextSlide()
+            }
+            manager.onTeleprompterEditScript = { [weak coordinator] in
+                coordinator?.toggleEditScript()
             }
         }
 
