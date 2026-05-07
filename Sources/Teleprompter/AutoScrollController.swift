@@ -2,12 +2,15 @@ import Foundation
 import Combine
 import QuartzCore
 
-// MARK: - Auto-Scroll Controller
+// MARK: - Teleprompter Controller
 
-/// Orchestrates the teleprompter display across three modes:
-/// - **Manual**: Slide-by-slide, user navigates with ⌘F1/⌘F2
-/// - **Auto-Scroll**: Fixed WPM continuous scroll
-/// - **Voice-Follow**: LCS-based voice alignment continuous scroll
+/// Unified teleprompter controller — **Voice-Guided Slides**.
+///
+/// Slides are the unit of navigation. Voice tracking operates *within* each slide,
+/// highlighting words as the speaker says them. When all words in a slide are
+/// confirmed, the teleprompter auto-advances.
+///
+/// Manual override (⌘F1/F2) always works regardless of voice state.
 @MainActor
 class AutoScrollController: ObservableObject {
 
@@ -22,10 +25,10 @@ class AutoScrollController: ObservableObject {
 
     @Published var state: ScrollState = .idle
 
-    /// Current operating mode
-    @Published var mode: TeleprompterMode = .manual
+    /// Whether voice tracking is enabled (vs pure manual slide navigation)
+    @Published var isVoiceTrackingEnabled: Bool = false
 
-    // MARK: - Slide State (Manual mode)
+    // MARK: - Slide State
 
     @Published var slides: [String] = []
     @Published var currentSlideIndex: Int = 0
@@ -39,147 +42,222 @@ class AutoScrollController: ObservableObject {
     var isFirstSlide: Bool { currentSlideIndex == 0 }
     var isLastSlide: Bool { currentSlideIndex >= slides.count - 1 }
 
-    var slideProgress: Double {
-        guard slideCount > 0 else { return 0 }
-        return Double(currentSlideIndex) / Double(max(1, slideCount - 1))
-    }
-
     var slideProgressText: String {
         "\(currentSlideIndex + 1) / \(slideCount)"
     }
 
-    // MARK: - Engines
+    // MARK: - Voice Tracking Engine
 
+    let voiceTracker = SlideVoiceTracker()
     let voiceFollowEngine = VoiceFollowEngine()
-    let autoScrollEngine = AutoScrollEngine()
 
-    /// Measured text height for voice-follow pixel offset calculation (set by view)
-    var voiceFollowContentHeight: CGFloat = 0
-    var voiceFollowViewportHeight: CGFloat = 0
+    /// Manual scroll target within the current slide (word index).
+    /// When set, the viewport scrolls here instead of following voice.
+    /// Auto-clears when voice tracking advances (user starts speaking).
+    @Published var manualScrollTarget: Int? = nil
 
-    // MARK: - Mode-Aware Progress
+    /// How many words to jump per ⌘F1/⌘F2 press in voice follow mode
+    private let scrollStepWords: Int = 8
+
+    /// Delay before auto-advancing to next slide after all words confirmed (seconds)
+    private let slideAdvanceDelay: TimeInterval = 0.6
+
+    /// Work item for delayed slide advance
+    private var slideAdvanceWorkItem: DispatchWorkItem?
+
+    // MARK: - Mode (for settings persistence)
+
+    /// Operating mode — maps to `isVoiceTrackingEnabled` at runtime.
+    @Published var mode: TeleprompterMode = .manual {
+        didSet {
+            isVoiceTrackingEnabled = (mode == .voiceFollow)
+        }
+    }
+
+    // MARK: - Progress
 
     var progress: Double {
-        switch mode {
-        case .manual:      return slideProgress
-        case .autoScroll:  return autoScrollEngine.progress
-        case .voiceFollow: return voiceFollowEngine.progress
+        if slideCount == 0 { return 0 }
+
+        let slideProgress = Double(currentSlideIndex) / Double(max(1, slideCount))
+        let wordProgress: Double
+        if isVoiceTrackingEnabled && voiceTracker.wordCount > 0 {
+            wordProgress = Double(voiceTracker.confirmedUpTo) / Double(voiceTracker.wordCount)
+        } else {
+            wordProgress = 0
         }
+
+        // Blend: slide-level + word-level within current slide
+        let perSlideWeight = 1.0 / Double(max(1, slideCount))
+        return slideProgress + wordProgress * perSlideWeight
     }
 
     var progressText: String {
-        switch mode {
-        case .manual:
-            return slideProgressText
-        case .autoScroll:
-            return "\(Int(autoScrollEngine.wordsPerMinute)) WPM"
-        case .voiceFollow:
-            let engine = voiceFollowEngine
-            let pos = Int(engine.displayPosition) + 1
-            let total = engine.wordCount
-            return "\(pos) / \(total)"
+        if isVoiceTrackingEnabled {
+            return "\(voiceTracker.confirmedUpTo)/\(voiceTracker.wordCount)"
         }
+        return slideProgressText
     }
 
-    /// Status text for the voice-follow state
+    /// Status text for voice tracking state
     var voiceFollowStatus: String {
-        switch voiceFollowEngine.state {
-        case .idle:       return "Idle"
+        switch voiceTracker.state {
+        case .idle:       return "Ready"
         case .tracking:   return "Tracking"
         case .adlibbing:  return "Off-script"
-        case .lost:       return "Listening…"
+        case .paused:     return "Paused"
         }
     }
 
-    // MARK: - Full script text (for continuous scroll modes)
-    private(set) var fullScriptText: String = ""
-
-    /// Individual words for word-level scroll targeting
-    var fullScriptWords: [String] {
-        fullScriptText.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
-    }
-
-    // MARK: - Slide Management (Manual mode)
+    // MARK: - Slide Management
 
     func loadSlides(from script: TeleprompterScript, maxWords: Int) {
         slides = script.slides(maxWords: maxWords)
         currentSlideIndex = 0
-        fullScriptText = script.text
+        loadCurrentSlideForVoiceTracking()
     }
 
     func nextSlide() {
+        slideAdvanceWorkItem?.cancel()
         guard !slides.isEmpty, currentSlideIndex < slides.count - 1 else {
             if !slides.isEmpty { state = .finished }
             return
         }
         currentSlideIndex += 1
+        loadCurrentSlideForVoiceTracking()
     }
 
     func previousSlide() {
+        slideAdvanceWorkItem?.cancel()
+        
+        if state == .finished {
+            state = .active
+            return // Just resume being active on the last slide
+        }
+        
         guard currentSlideIndex > 0 else { return }
         currentSlideIndex -= 1
+        loadCurrentSlideForVoiceTracking()
     }
 
     func goToSlide(at index: Int) {
+        slideAdvanceWorkItem?.cancel()
         guard !slides.isEmpty else { return }
         currentSlideIndex = max(0, min(slides.count - 1, index))
+        manualScrollTarget = nil
+        loadCurrentSlideForVoiceTracking()
+    }
+
+    // MARK: - In-Slide Scroll (Voice Follow mode)
+
+    /// Scroll viewport forward within the current slide (⌘F2 in voice follow).
+    /// If already at the end of the slide, advance to next slide.
+    func scrollForwardInSlide() {
+        let current = manualScrollTarget ?? voiceTracker.confirmedUpTo
+        let maxWord = voiceTracker.wordCount - 1
+
+        if current >= maxWord {
+            // At end of slide — go to next slide
+            nextSlide()
+            return
+        }
+
+        let target = min(current + scrollStepWords, maxWord)
+        manualScrollTarget = target
+    }
+
+    /// Scroll viewport backward within the current slide (⌘F1 in voice follow).
+    /// If already at the beginning of the slide, go to previous slide.
+    func scrollBackInSlide() {
+        if state == .finished {
+            state = .active
+            manualScrollTarget = nil // Reset to end of last slide implicitly
+            return
+        }
+
+        let current = manualScrollTarget ?? voiceTracker.confirmedUpTo
+
+        if current <= 0 {
+            // At start of slide — go to previous slide
+            previousSlide()
+            return
+        }
+
+        let target = max(0, current - scrollStepWords)
+        manualScrollTarget = target
+    }
+
+    /// Clear manual scroll — lets voice tracking control viewport again
+    func clearManualScroll() {
+        manualScrollTarget = nil
+    }
+
+    /// Load the current slide's text into the voice tracker
+    private func loadCurrentSlideForVoiceTracking() {
+        guard isVoiceTrackingEnabled else { return }
+        voiceTracker.loadSlide(text: currentSlide)
+        if state == .active {
+            voiceTracker.start()
+        }
     }
 
     // MARK: - Controls
 
     func start(settings: TeleprompterSettings? = nil, script: TeleprompterScript? = nil) {
-        switch mode {
-        case .manual:
-            currentSlideIndex = 0
-            state = .active
+        currentSlideIndex = 0
+        state = .active
 
-        case .autoScroll:
-            guard let script, !script.isEmpty else {
-                state = .active
-                return
-            }
-            fullScriptText = script.text
-            autoScrollEngine.totalWords = script.wordCount
-            autoScrollEngine.wordsPerMinute = settings?.autoScrollWPM ?? 150
-            autoScrollEngine.progress = 0
-            autoScrollEngine.start()
-            state = .active
+        // Determine mode from settings
+        let settingsMode = settings?.mode ?? mode
+        isVoiceTrackingEnabled = (settingsMode == .voiceFollow)
 
-        case .voiceFollow:
-            guard let script, !script.isEmpty else {
-                state = .active
-                return
+        if isVoiceTrackingEnabled {
+            guard let script, !script.isEmpty else { return }
+
+            // Load first slide for voice tracking
+            loadCurrentSlideForVoiceTracking()
+
+            // Wire up voice tracker slide completion
+            voiceTracker.onSlideComplete = { [weak self] in
+                self?.handleSlideComplete()
             }
-            fullScriptText = script.text
-            voiceFollowEngine.loadScript(text: script.text)
+
+            // Configure and start the voice engine
             voiceFollowEngine.phraseWindowSize = settings?.phraseWindowSize ?? 12
             voiceFollowEngine.speechLocale = settings?.speechLocale ?? "en-US"
-            voiceFollowEngine.speechBackend = settings?.speechBackend ?? .apple
-            voiceFollowEngine.onScriptComplete = { [weak self] in
-                self?.state = .finished
+
+
+            // Wire speech provider words → slide voice tracker
+            voiceFollowEngine.onRecognizedWords = { [weak self] words in
+                self?.voiceTracker.handleRecognizedWords(words)
             }
             voiceFollowEngine.start()
-            state = .active
+            voiceTracker.start()
         }
     }
 
     func pause() {
         guard state == .active else { return }
-        if mode == .autoScroll { autoScrollEngine.pause() }
-        if mode == .voiceFollow { voiceFollowEngine.stop() }
+        if isVoiceTrackingEnabled {
+            voiceFollowEngine.stop()
+            voiceTracker.stop()
+        }
         state = .paused
     }
 
     func resume() {
         guard state == .paused else { return }
-        if mode == .autoScroll { autoScrollEngine.start() }
-        if mode == .voiceFollow { voiceFollowEngine.start() }
+        if isVoiceTrackingEnabled {
+            voiceFollowEngine.start()
+            voiceTracker.start()
+        }
         state = .active
     }
 
     func stop() {
-        autoScrollEngine.stop()
+        slideAdvanceWorkItem?.cancel()
         voiceFollowEngine.stop()
+        voiceTracker.stop()
         currentSlideIndex = 0
         state = .idle
     }
@@ -196,8 +274,28 @@ class AutoScrollController: ObservableObject {
         }
     }
 
-    /// Nudge auto-scroll speed (⌘F1 = slower, ⌘F2 = faster)
-    func nudgeSpeed(faster: Bool) {
-        autoScrollEngine.nudgeSpeed(faster: faster)
+    // MARK: - Slide Auto-Advance
+
+    /// Called when the voice tracker confirms all words in the current slide.
+    /// Waits a brief beat, then advances to the next slide.
+    private func handleSlideComplete() {
+        guard state == .active else { return }
+
+        if isLastSlide {
+            state = .finished
+            voiceFollowEngine.stop()
+            voiceTracker.stop()
+            return
+        }
+
+        // Brief delay before auto-advancing (gives the speaker a beat to breathe)
+        slideAdvanceWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.state == .active else { return }
+            self.currentSlideIndex += 1
+            self.loadCurrentSlideForVoiceTracking()
+        }
+        slideAdvanceWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + slideAdvanceDelay, execute: work)
     }
 }

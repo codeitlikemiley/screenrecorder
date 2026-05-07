@@ -1,6 +1,23 @@
 import Foundation
 import CoreMedia
 
+// MARK: - Recognised Word
+
+/// A single word recognised by the speech provider, with metadata.
+struct RecognizedWord: Equatable {
+    /// The recognised text (original casing)
+    let text: String
+
+    /// Seconds since recognition session start
+    let timestamp: TimeInterval
+
+    /// Duration of the word in seconds (0 if unknown)
+    let duration: TimeInterval
+
+    /// Confidence score (0.0...1.0, or -1 if unknown)
+    let confidence: Float
+}
+
 // MARK: - Speech Provider Protocol
 
 /// Abstraction over speech recognition backends (Apple Speech, WhisperKit, etc.)
@@ -8,7 +25,7 @@ import CoreMedia
 protocol SpeechProvider: AnyObject {
     /// Called with the cumulative list of recognised words from the current session.
     /// Each call replaces the previous list (not incremental).
-    var onWords: (([String]) -> Void)? { get set }
+    var onWords: (([RecognizedWord]) -> Void)? { get set }
 
     /// Whether the provider is currently listening.
     var isListening: Bool { get }
@@ -29,14 +46,12 @@ protocol SpeechProvider: AnyObject {
 /// Which speech recognition backend to use.
 enum SpeechBackend: String, Codable, CaseIterable, Identifiable {
     case apple      // SFSpeechRecognizer (lower latency, partial results ~200ms)
-    case whisperKit // WhisperKit (better accuracy, ~1-2s chunk latency)
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
         case .apple:      return "Apple Speech"
-        case .whisperKit: return "WhisperKit"
         }
     }
 }

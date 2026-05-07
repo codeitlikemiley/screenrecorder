@@ -98,6 +98,30 @@ struct AnnotationStroke: Identifiable, Codable {
 
     /// For shape tools, the bounding rect defined by first and last point
     var boundingRect: CGRect? {
+        if tool == .text {
+            guard let pos = points.first, let content = textContent else { return nil }
+            // Calculate actual rendered size
+            #if os(macOS)
+            let font = NSFont.systemFont(ofSize: lineWidth, weight: .semibold)
+            let attributes: [NSAttributedString.Key: Any] = [.font: font]
+            let size = (content as NSString).size(withAttributes: attributes)
+            let width = size.width
+            let height = size.height
+            #else
+            let height = CGFloat(lines.count) * lineWidth * 1.3
+            let width = CGFloat(maxChars) * lineWidth * 0.6
+            #endif
+            
+            // Padding added in drawText
+            let padding: CGFloat = 4
+            return CGRect(
+                x: pos.x - padding,
+                y: pos.y - padding,
+                width: width + padding * 2,
+                height: height + padding * 2
+            )
+        }
+
         let pts = points
         guard pts.count >= 2 else { return nil }
         let origin = pts.first!
@@ -109,6 +133,10 @@ struct AnnotationStroke: Identifiable, Codable {
             height: abs(end.y - origin.y)
         )
     }
+}
+
+enum DragHandle {
+    case topLeft, topRight, bottomLeft, bottomRight
 }
 
 // MARK: - Annotation Session
@@ -174,6 +202,8 @@ class AnnotationState: ObservableObject {
     // MARK: - Move Mode State
     @Published var selectedStrokeIndex: Int? = nil
     @Published var dragStartPoint: CGPoint? = nil
+    @Published var activeDragHandle: DragHandle? = nil
+    var dragStartStroke: AnnotationStroke? = nil
 
     // MARK: - Session Management
     @Published var sessions: [AnnotationSession] = []
@@ -317,7 +347,31 @@ class AnnotationState: ObservableObject {
 
     // MARK: - Move Mode
 
+    func hitTestHandle(at point: CGPoint, rect: CGRect, threshold: CGFloat = 12) -> DragHandle? {
+        let handles: [(DragHandle, CGPoint)] = [
+            (.topLeft, CGPoint(x: rect.minX, y: rect.minY)),
+            (.topRight, CGPoint(x: rect.maxX, y: rect.minY)),
+            (.bottomLeft, CGPoint(x: rect.minX, y: rect.maxY)),
+            (.bottomRight, CGPoint(x: rect.maxX, y: rect.maxY))
+        ]
+        
+        for (handle, handlePos) in handles {
+            let distance = hypot(handlePos.x - point.x, handlePos.y - point.y)
+            if distance <= threshold {
+                return handle
+            }
+        }
+        return nil
+    }
+
     func hitTestStroke(at point: CGPoint, threshold: CGFloat = 20) -> Int? {
+        // If a stroke is already selected, check its handles first
+        if let selectedIndex = selectedStrokeIndex, selectedIndex < strokes.count {
+            if let rect = strokes[selectedIndex].boundingRect, hitTestHandle(at: point, rect: rect) != nil {
+                return selectedIndex
+            }
+        }
+        
         for i in stride(from: strokes.count - 1, through: 0, by: -1) {
             let stroke = strokes[i]
             for strokePoint in stroke.points {
@@ -340,27 +394,107 @@ class AnnotationState: ObservableObject {
         if let index = hitTestStroke(at: point) {
             selectedStrokeIndex = index
             dragStartPoint = point
+            dragStartStroke = strokes[index]
+            
+            if let rect = strokes[index].boundingRect {
+                activeDragHandle = hitTestHandle(at: point, rect: rect)
+            } else {
+                activeDragHandle = nil
+            }
         } else {
             selectedStrokeIndex = nil
             dragStartPoint = nil
+            dragStartStroke = nil
+            activeDragHandle = nil
         }
     }
 
     func continueMove(to point: CGPoint) {
         guard let index = selectedStrokeIndex,
               let start = dragStartPoint,
+              let originalStroke = dragStartStroke,
               index < strokes.count else { return }
-        let dx = point.x - start.x
-        let dy = point.y - start.y
-        strokes[index].points = strokes[index].points.map { p in
-            CGPoint(x: p.x + dx, y: p.y + dy)
+              
+        if let handle = activeDragHandle, let originalRect = originalStroke.boundingRect {
+            // Resize mode
+            var newRect = originalRect
+            
+            switch handle {
+            case .topLeft:
+                newRect.origin.x += (point.x - start.x)
+                newRect.origin.y += (point.y - start.y)
+                newRect.size.width -= (point.x - start.x)
+                newRect.size.height -= (point.y - start.y)
+            case .topRight:
+                newRect.origin.y += (point.y - start.y)
+                newRect.size.width += (point.x - start.x)
+                newRect.size.height -= (point.y - start.y)
+            case .bottomLeft:
+                newRect.origin.x += (point.x - start.x)
+                newRect.size.width -= (point.x - start.x)
+                newRect.size.height += (point.y - start.y)
+            case .bottomRight:
+                newRect.size.width += (point.x - start.x)
+                newRect.size.height += (point.y - start.y)
+            }
+            
+            // Prevent flipping
+            if newRect.width < 10 {
+                newRect.origin.x = strokes[index].boundingRect?.origin.x ?? newRect.origin.x
+                newRect.size.width = 10
+            }
+            if newRect.height < 10 {
+                newRect.origin.y = strokes[index].boundingRect?.origin.y ?? newRect.origin.y
+                newRect.size.height = 10
+            }
+            
+            if originalStroke.tool == .text {
+                // For text, scale the font size based on the height change
+                let scaleY = newRect.height / originalRect.height
+                strokes[index].lineWidth = max(12, originalStroke.lineWidth * scaleY)
+                
+                // Adjust position so the text scales nicely
+                if let originalPos = originalStroke.points.first {
+                    var newX = originalPos.x
+                    var newY = originalPos.y
+                    if handle == .topLeft || handle == .bottomLeft {
+                        newX += (point.x - start.x)
+                    }
+                    if handle == .topLeft || handle == .topRight {
+                        newY += (point.y - start.y)
+                    }
+                    strokes[index].points = [CGPoint(x: newX, y: newY)]
+                }
+            } else {
+                // For shapes, scale all points
+                let scaleX = newRect.width / originalRect.width
+                let scaleY = newRect.height / originalRect.height
+                
+                strokes[index].points = originalStroke.points.map { p in
+                    let normX = (p.x - originalRect.minX) / originalRect.width
+                    let normY = (p.y - originalRect.minY) / originalRect.height
+                    
+                    return CGPoint(
+                        x: newRect.minX + normX * newRect.width,
+                        y: newRect.minY + normY * newRect.height
+                    )
+                }
+            }
+        } else {
+            // Translate mode
+            let dx = point.x - start.x
+            let dy = point.y - start.y
+            strokes[index].points = originalStroke.points.map { p in
+                CGPoint(x: p.x + dx, y: p.y + dy)
+            }
         }
-        dragStartPoint = point
     }
 
     func endMove() {
-        selectedStrokeIndex = nil
         dragStartPoint = nil
+        dragStartStroke = nil
+        activeDragHandle = nil
+        // Keep selectedStrokeIndex so it stays highlighted
     }
 
     func deselectStroke() {

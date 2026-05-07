@@ -283,12 +283,12 @@ class RecordingCoordinator: ObservableObject {
             appState.isRecording = true
             appState.startRecordingTimer()
 
-            // Seamless Teleprompter Start (Auto-Scroll or Voice-Follow mode)
-            if appState.isTeleprompterEnabled && (appState.teleprompterSettings.mode == .autoScroll || appState.teleprompterSettings.mode == .voiceFollow) {
+            // Seamless Teleprompter Start (Voice-Follow mode)
+            if appState.isTeleprompterEnabled && appState.teleprompterSettings.mode == .voiceFollow {
                 // During screen recording with mic, the speech provider can't create its own
                 // AVAudioEngine because ScreenCaptureKit has exclusive mic access.
                 // Use external feed mode — mic samples come via onMicSampleBuffer above.
-                if appState.isMicrophoneEnabled && appState.teleprompterSettings.mode == .voiceFollow {
+                if appState.isMicrophoneEnabled {
                     appState.autoScrollController.voiceFollowEngine.useExternalAudioFeed = true
                 }
                 appState.autoScrollController.start(settings: appState.teleprompterSettings, script: appState.teleprompterScript)
@@ -531,8 +531,8 @@ class RecordingCoordinator: ObservableObject {
             appState.isCameraOnlyRecording = true
             appState.startRecordingTimer()
 
-            // Seamless Teleprompter Start (Auto-Scroll or Voice-Follow mode)
-            if appState.isTeleprompterEnabled && (appState.teleprompterSettings.mode == .autoScroll || appState.teleprompterSettings.mode == .voiceFollow) {
+            // Seamless Teleprompter Start (Voice-Follow mode)
+            if appState.isTeleprompterEnabled && appState.teleprompterSettings.mode == .voiceFollow {
                 appState.autoScrollController.start(settings: appState.teleprompterSettings, script: appState.teleprompterScript)
             }
 
@@ -645,20 +645,30 @@ class RecordingCoordinator: ObservableObject {
 
     // MARK: - Teleprompter
 
-    /// Toggle teleprompter overlay visibility (called via ⌘F4 or Menu)
+    /// Toggle teleprompter overlay visibility (called via ⌘F3 or Menu)
+    /// This shows/hides the overlay window WITHOUT disabling the service.
+    /// The service (isTeleprompterEnabled) controls whether the system is active.
+    /// Visibility is just whether the window is on screen.
     func toggleTeleprompterVisibility() {
-        appState.isTeleprompterEnabled.toggle()
-
-        if appState.isTeleprompterEnabled {
-            // Sync mode from settings
+        if !appState.isTeleprompterEnabled {
+            // If service is off, enable it AND show the window
+            appState.isTeleprompterEnabled = true
             appState.autoScrollController.mode = appState.teleprompterSettings.mode
-            // Always load slides (both manual and auto modes use slides)
             appState.autoScrollController.loadSlides(
                 from: appState.teleprompterScript,
                 maxWords: appState.teleprompterSettings.maxWordsPerSlide
             )
+            
+            // If we are not recording, run voice tracking using the internal Apple Speech mic feed
+            if !appState.isRecording {
+                appState.autoScrollController.voiceFollowEngine.useExternalAudioFeed = false
+                appState.autoScrollController.start(settings: appState.teleprompterSettings, script: appState.teleprompterScript)
+            }
+            
+            overlayManager.showTeleprompter()
         } else {
-            appState.autoScrollController.stop()
+            // Service is on — just toggle the overlay window visibility
+            overlayManager.toggleTeleprompter()
         }
     }
 
@@ -667,30 +677,39 @@ class RecordingCoordinator: ObservableObject {
         if !appState.isTeleprompterEnabled {
             overlayManager.hideTeleprompter()
             appState.autoScrollController.stop()
+        } else {
+            appState.autoScrollController.mode = appState.teleprompterSettings.mode
+            appState.autoScrollController.loadSlides(
+                from: appState.teleprompterScript,
+                maxWords: appState.teleprompterSettings.maxWordsPerSlide
+            )
+            
+            if !appState.isRecording {
+                appState.autoScrollController.voiceFollowEngine.useExternalAudioFeed = false
+                appState.autoScrollController.start(settings: appState.teleprompterSettings, script: appState.teleprompterScript)
+            }
         }
     }
 
-    /// Navigate to previous slide / slow down auto-scroll
+    /// ⌘F1 — Mode-aware navigation
+    /// Manual: previous slide. Voice Follow: scroll up within slide.
     func teleprompterPrevSlide() {
-        switch appState.teleprompterSettings.mode {
-        case .manual:
-            appState.autoScrollController.previousSlide()
-        case .autoScroll:
-            appState.autoScrollController.nudgeSpeed(faster: false)
-        case .voiceFollow:
-            break // No manual control in voice-follow
+        let controller = appState.autoScrollController
+        if controller.isVoiceTrackingEnabled {
+            controller.scrollBackInSlide()
+        } else {
+            controller.previousSlide()
         }
     }
 
-    /// Navigate to next slide / speed up auto-scroll
+    /// ⌘F2 — Mode-aware navigation
+    /// Manual: next slide. Voice Follow: scroll down within slide.
     func teleprompterNextSlide() {
-        switch appState.teleprompterSettings.mode {
-        case .manual:
-            appState.autoScrollController.nextSlide()
-        case .autoScroll:
-            appState.autoScrollController.nudgeSpeed(faster: true)
-        case .voiceFollow:
-            break // No manual control in voice-follow
+        let controller = appState.autoScrollController
+        if controller.isVoiceTrackingEnabled {
+            controller.scrollForwardInSlide()
+        } else {
+            controller.nextSlide()
         }
     }
 

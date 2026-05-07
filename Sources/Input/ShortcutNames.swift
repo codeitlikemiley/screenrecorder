@@ -11,7 +11,7 @@ extension KeyboardShortcuts.Name {
     static let toggleMicrophone = Self("toggleMicrophone", default: .init(.m, modifiers: [.command, .shift]))
     static let toggleKeystrokeOverlay = Self("toggleKeystrokeOverlay", default: .init(.k, modifiers: [.command, .shift]))
     static let toggleControlBar = Self("toggleControlBar", default: .init(.h, modifiers: [.command, .shift]))
-    static let openSettings = Self("openSettings", default: .init(.comma, modifiers: [.command]))
+    static let openSettings = Self("openSettings", default: .init(.f5, modifiers: [.command]))
     static let openRecordings = Self("openRecordings", default: .init(.f, modifiers: [.command, .shift]))
     static let openLibrary = Self("openLibrary", default: .init(.l, modifiers: [.command, .shift]))
     static let volumeUp = Self("volumeUp", default: .init(.equal, modifiers: [.command, .shift]))
@@ -34,10 +34,26 @@ extension KeyboardShortcuts.Name {
     // Teleprompter
     static let teleprompterPrevSlide = Self("teleprompterPrevSlide", default: .init(.f1, modifiers: [.command]))
     static let teleprompterNextSlide = Self("teleprompterNextSlide", default: .init(.f2, modifiers: [.command]))
-    static let toggleTeleprompter = Self("toggleTeleprompter", default: .init(.f4, modifiers: [.command]))
-    static let teleprompterEditScript = Self("teleprompterEditScript", default: .init(.f5, modifiers: [.command]))
+    static let toggleTeleprompter = Self("toggleTeleprompter", default: .init(.f3, modifiers: [.command]))
+    static let teleprompterEditScript = Self("teleprompterEditScript", default: .init(.f4, modifiers: [.command]))
     static let teleprompterFontUp = Self("teleprompterFontUp", default: .init(.equal, modifiers: [.command, .option]))
     static let teleprompterFontDown = Self("teleprompterFontDown", default: .init(.minus, modifiers: [.command, .option]))
+
+    /// One-time migration: if the user still has the old ⌘F4 binding for
+    /// toggleTeleprompter (from before we switched to ⌘F3), reset it.
+    static func migrateDefaults() {
+        let currentTeleprompter = KeyboardShortcuts.getShortcut(for: .toggleTeleprompter)
+        if let currentTeleprompter, currentTeleprompter.key == .f4 && currentTeleprompter.modifiers == .command {
+            KeyboardShortcuts.reset(.toggleTeleprompter)
+            print("🔑 Migrated toggleTeleprompter shortcut: ⌘F4 → ⌘F3")
+        }
+
+        let currentSettings = KeyboardShortcuts.getShortcut(for: .openSettings)
+        if let currentSettings, currentSettings.key == .comma && currentSettings.modifiers == .command {
+            KeyboardShortcuts.reset(.openSettings)
+            print("🔑 Migrated openSettings shortcut: ⌘, → ⌘F5")
+        }
+    }
 }
 
 /// CaseIterable conformance for enumerating all shortcuts in Settings UI.

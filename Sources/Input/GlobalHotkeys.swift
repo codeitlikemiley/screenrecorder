@@ -140,25 +140,21 @@ final class GlobalHotkeyManager {
             self?.onToggleAnnotation?()
         }
 
-        // ⌘F4 — Toggle Teleprompter (always global)
+        // ⌘F3 — Toggle Teleprompter (always global)
         KeyboardShortcuts.onKeyDown(for: .toggleTeleprompter) { [weak self] in
             self?.onToggleTeleprompter?()
         }
 
-        // ⌘F5 — Edit Script (always global)
+        // ⌘F4 — Edit Script (always global)
         KeyboardShortcuts.onKeyDown(for: .teleprompterEditScript) { [weak self] in
             self?.onTeleprompterEditScript?()
         }
 
-        // NOTE: Annotation-only and teleprompter-only shortcuts are
-        // registered separately and only active while their mode is on.
+        setupAnnotationHotkeys()
+        setupTeleprompterHotkeys()
     }
 
-    // MARK: - Annotation-scoped hotkeys (only active during annotation mode)
-
-    /// Call this when annotation mode becomes active.
-    /// Registers shortcuts that would conflict with other apps when not annotating.
-    func registerAnnotationHotkeys() {
+    private func setupAnnotationHotkeys() {
         // ⌘⇧X — Clear All Annotations
         KeyboardShortcuts.onKeyDown(for: .clearAnnotations) { [weak self] in
             self?.onClearAnnotations?()
@@ -212,29 +208,12 @@ final class GlobalHotkeyManager {
         KeyboardShortcuts.onKeyDown(for: .annotationRedo) { [weak self] in
             self?.appState?.annotationState.redo()
         }
+
+        // Disable them initially so they don't steal keys when annotation mode is off
+        unregisterAnnotationHotkeys()
     }
 
-    /// Call this when annotation mode is deactivated.
-    /// Releases all annotation-only shortcuts so other apps can use them freely.
-    func unregisterAnnotationHotkeys() {
-        KeyboardShortcuts.removeHandler(for: .clearAnnotations)
-        KeyboardShortcuts.removeHandler(for: .annotationScreenshot)
-        KeyboardShortcuts.removeHandler(for: .annotationScreenshotAlt)
-        KeyboardShortcuts.removeHandler(for: .toolPen)
-        KeyboardShortcuts.removeHandler(for: .toolLine)
-        KeyboardShortcuts.removeHandler(for: .toolArrow)
-        KeyboardShortcuts.removeHandler(for: .toolRectangle)
-        KeyboardShortcuts.removeHandler(for: .toolEllipse)
-        KeyboardShortcuts.removeHandler(for: .toolText)
-        KeyboardShortcuts.removeHandler(for: .toolMove)
-        KeyboardShortcuts.removeHandler(for: .annotationUndo)
-        KeyboardShortcuts.removeHandler(for: .annotationRedo)
-    }
-
-    // MARK: - Teleprompter-scoped hotkeys (only active when teleprompter is visible)
-
-    /// Call this when the teleprompter becomes visible.
-    func registerTeleprompterHotkeys() {
+    private func setupTeleprompterHotkeys() {
         // ⌘F1 — Previous Slide
         KeyboardShortcuts.onKeyDown(for: .teleprompterPrevSlide) { [weak self] in
             self?.onTeleprompterPrevSlide?()
@@ -256,14 +235,35 @@ final class GlobalHotkeyManager {
             guard let self, let state = self.appState else { return }
             state.teleprompterSettings.fontSize = max(16, state.teleprompterSettings.fontSize - 2)
         }
+
+        // Disable initially
+        unregisterTeleprompterHotkeys()
+    }
+
+    // MARK: - Annotation-scoped hotkeys (only active during annotation mode)
+
+    /// Call this when annotation mode becomes active.
+    /// Registers shortcuts that would conflict with other apps when not annotating.
+    func registerAnnotationHotkeys() {
+        KeyboardShortcuts.enable(.clearAnnotations, .annotationScreenshot, .annotationScreenshotAlt, .toolPen, .toolLine, .toolArrow, .toolRectangle, .toolEllipse, .toolText, .toolMove, .annotationUndo, .annotationRedo)
+    }
+
+    /// Call this when annotation mode is deactivated.
+    /// Releases all annotation-only shortcuts so other apps can use them freely.
+    func unregisterAnnotationHotkeys() {
+        KeyboardShortcuts.disable(.clearAnnotations, .annotationScreenshot, .annotationScreenshotAlt, .toolPen, .toolLine, .toolArrow, .toolRectangle, .toolEllipse, .toolText, .toolMove, .annotationUndo, .annotationRedo)
+    }
+
+    // MARK: - Teleprompter-scoped hotkeys (only active when teleprompter is visible)
+
+    /// Call this when the teleprompter becomes visible.
+    func registerTeleprompterHotkeys() {
+        KeyboardShortcuts.enable(.teleprompterPrevSlide, .teleprompterNextSlide, .teleprompterFontUp, .teleprompterFontDown)
     }
 
     /// Call this when the teleprompter is hidden.
     func unregisterTeleprompterHotkeys() {
-        KeyboardShortcuts.removeHandler(for: .teleprompterPrevSlide)
-        KeyboardShortcuts.removeHandler(for: .teleprompterNextSlide)
-        KeyboardShortcuts.removeHandler(for: .teleprompterFontUp)
-        KeyboardShortcuts.removeHandler(for: .teleprompterFontDown)
+        KeyboardShortcuts.disable(.teleprompterPrevSlide, .teleprompterNextSlide, .teleprompterFontUp, .teleprompterFontDown)
     }
 
     // MARK: - Unregister All

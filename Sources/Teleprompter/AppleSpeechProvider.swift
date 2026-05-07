@@ -14,7 +14,7 @@ import CoreMedia
 ///    mic capture). Use this when another subsystem already owns the microphone.
 class AppleSpeechProvider: SpeechProvider {
 
-    var onWords: (([String]) -> Void)?
+    var onWords: (([RecognizedWord]) -> Void)?
     private(set) var isListening: Bool = false
 
     private var speechRecognizer: SFSpeechRecognizer?
@@ -140,7 +140,15 @@ class AppleSpeechProvider: SpeechProvider {
         recognitionTask = recogniser.recognitionTask(with: request) { [weak self] result, error in
             guard let self else { return }
             if let result {
-                let words = result.bestTranscription.segments.map { $0.substring }
+                let segments = result.bestTranscription.segments
+                let words: [RecognizedWord] = segments.map { segment in
+                    RecognizedWord(
+                        text: segment.substring,
+                        timestamp: segment.timestamp,
+                        duration: segment.duration,
+                        confidence: segment.confidence
+                    )
+                }
                 DispatchQueue.main.async {
                     self.onWords?(words)
                 }

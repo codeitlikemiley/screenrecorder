@@ -25,16 +25,10 @@ struct TeleprompterSettings: Codable, Equatable {
 
     // MARK: Manual Mode Settings
 
-    /// Maximum words per slide for smart chunking (20...120)
+    /// Maximum words per slide for smart chunking (1...120)
     var maxWordsPerSlide: Int = 60
 
-    /// Transition animation between slides
-    var slideTransition: SlideTransition = .fade
 
-    // MARK: Auto-Scroll Mode Settings
-
-    /// Scroll speed in words per minute (80...250)
-    var autoScrollWPM: Double = 150
 
     // MARK: Voice-Follow Mode Settings
 
@@ -44,8 +38,7 @@ struct TeleprompterSettings: Codable, Equatable {
     /// Speech recognition locale (e.g. "en-US", "en-PH", "en-GB")
     var speechLocale: String = "en-US"
 
-    /// Which speech recognition backend to use
-    var speechBackend: SpeechBackend = .apple
+
 
     // MARK: Appearance
 
@@ -55,25 +48,8 @@ struct TeleprompterSettings: Codable, Equatable {
     /// Background rendering style
     var backgroundStyle: TeleprompterBackgroundStyle = .frosted
 
-    /// Whether text is horizontally mirrored (for teleprompter glass rigs)
-    var isMirrorMode: Bool = false
-
-    /// Highlight the line currently in the reading zone (autoScroll mode)
-    var highlightCurrentLine: Bool = true
-
-    /// Which part of the window is the "reading zone" (autoScroll mode)
-    var focusGuide: TeleprompterFocusGuide = .middle
-
-    // MARK: Behavior
-
-    /// Stay above all windows
-    var isAlwaysOnTop: Bool = true
-
     /// Allow mouse clicks to pass through to apps behind
     var isClickThrough: Bool = false
-
-    /// Hide the teleprompter from screen recordings (default: hidden)
-    var isExcludedFromRecording: Bool = true
 
     /// When true, overrides isExcludedFromRecording so the overlay CAN appear
     /// in screen recordings — useful for demoing the teleprompter feature itself.
@@ -142,21 +118,7 @@ enum TeleprompterMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum SlideTransition: String, Codable, CaseIterable, Identifiable {
-    case fade
-    case slide
-    case instant
 
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .fade:    return "Fade"
-        case .slide:   return "Slide"
-        case .instant: return "Instant"
-        }
-    }
-}
 
 enum TeleprompterTextAlignment: String, Codable, CaseIterable, Identifiable {
     case leading
@@ -173,7 +135,6 @@ enum TeleprompterTextAlignment: String, Codable, CaseIterable, Identifiable {
 }
 
 enum TeleprompterBackgroundStyle: String, Codable, CaseIterable, Identifiable {
-    case transparent
     case frosted
     case solid
 
@@ -181,47 +142,36 @@ enum TeleprompterBackgroundStyle: String, Codable, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .transparent: return "Transparent"
         case .frosted:     return "Frosted Glass"
         case .solid:       return "Solid Dark"
         }
     }
 }
 
-enum TeleprompterFocusGuide: String, Codable, CaseIterable, Identifiable {
-    case none
-    case top
-    case middle
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .none:   return "Off"
-        case .top:    return "Top Zone"
-        case .middle: return "Middle Zone"
-        }
-    }
-}
 
 enum TeleprompterPlacementMode: String, Codable, CaseIterable, Identifiable {
     /// Free-floating, user places it anywhere
     case floating
-    /// Near the webcam for eye-line contact
-    case cameraEyeLine
+    /// Pinned to the notch / Dynamic Island area at top-center
+    case dynamicIsland
     /// Top-center of the screen, wide and narrow
     case presentationTop
-    /// Docked below or above the camera bubble
-    case docked
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
         case .floating:        return "Floating"
-        case .cameraEyeLine:   return "Camera Eye-Line"
+        case .dynamicIsland:   return "Dynamic Island"
         case .presentationTop: return "Presentation (Top)"
-        case .docked:          return "Docked to Camera"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .floating:        return "macwindow"
+        case .dynamicIsland:   return "rectangle.topthird.inset.filled"
+        case .presentationTop: return "rectangle.topthird.inset.filled"
         }
     }
 }

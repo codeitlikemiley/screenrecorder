@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Combine
+import KeyboardShortcuts
 
 /// Application delegate for handling lifecycle events,
 /// global hotkey registration, and window management.
@@ -17,6 +18,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             // Make the app an accessory (no dock icon, just menu bar)
             NSApp.setActivationPolicy(.accessory)
+
+            // Migrate stale shortcut defaults (e.g. ⌘F4 → ⌘F3)
+            KeyboardShortcuts.Name.migrateDefaults()
+
             setupHotkeys()
         }
     }
@@ -144,6 +149,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         manager.registerHotkeys()
         hotkeyManager = manager
+
+        // Ensure scoped hotkeys are re-registered on the new manager if their features are already active
+        if appState.isTeleprompterEnabled {
+            manager.registerTeleprompterHotkeys()
+        }
+        if appState.isAnnotationModeActive {
+            manager.registerAnnotationHotkeys()
+        }
     }
 
 }

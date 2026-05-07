@@ -272,9 +272,8 @@ struct SettingsView: View {
                                     .foregroundStyle(.secondary)
                                     .frame(width: 110, alignment: .leading)
                                 Picker("", selection: $appState.teleprompterSettings.mode) {
-                                    ForEach(TeleprompterMode.allCases) { mode in
-                                        Text(mode.displayName).tag(mode)
-                                    }
+                                    Text("Manual").tag(TeleprompterMode.manual)
+                                    Text("Voice-Follow").tag(TeleprompterMode.voiceFollow)
                                 }
                                 .labelsHidden()
                                 .pickerStyle(.segmented)
@@ -307,13 +306,58 @@ struct SettingsView: View {
                                 .pickerStyle(.segmented)
                             }
 
-                            Toggle("Exclude from Recording", isOn: $appState.teleprompterSettings.isExcludedFromRecording)
+                            HStack {
+                                Text("Placement")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 110, alignment: .leading)
+                                Picker("", selection: $appState.teleprompterSettings.placementMode) {
+                                    ForEach(TeleprompterPlacementMode.allCases) { mode in
+                                        Label(mode.displayName, systemImage: mode.icon).tag(mode)
+                                    }
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                                .onChange(of: appState.teleprompterSettings.placementMode) { _, _ in
+                                    NotificationCenter.default.post(name: .teleprompterPlacementChanged, object: nil)
+                                }
+                            }
+
+                            HStack {
+                                Text("Words/Slide")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 110, alignment: .leading)
+                                TextField("e.g. 60", value: Binding(
+                                    get: { appState.teleprompterSettings.maxWordsPerSlide },
+                                    set: { val in appState.teleprompterSettings.maxWordsPerSlide = max(1, val) }
+                                ), format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 60)
+                                Spacer()
+                            }
+
+                            HStack {
+                                Text("Match Window")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 110, alignment: .leading)
+                                TextField("e.g. 12", value: Binding(
+                                    get: { appState.teleprompterSettings.phraseWindowSize },
+                                    set: { val in appState.teleprompterSettings.phraseWindowSize = max(1, val) }
+                                ), format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 60)
+                                Spacer()
+                            }
+
+                            Toggle("Click-Through Mode", isOn: $appState.teleprompterSettings.isClickThrough)
                                 .font(.system(size: 12))
 
-                            Toggle("Mirror Mode", isOn: $appState.teleprompterSettings.isMirrorMode)
+                            Toggle("Demo Mode (Show on Streams)", isOn: $appState.teleprompterSettings.isVisibleInRecordings)
                                 .font(.system(size: 12))
 
-                            Text("⌘F4 = Toggle teleprompter  ⌘F5 = Edit script  ⌘F1/F2 = Prev/Next slide")
+                            Text("⌘F3 = Toggle teleprompter  ⌘F5 = Edit script  ⌘F1/F2 = Prev/Next slide")
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
                         }
@@ -355,6 +399,15 @@ struct SettingsView: View {
         }
         .frame(width: 480, height: 780)
         .background(.ultraThickMaterial)
+        .onAppear {
+            DispatchQueue.main.async {
+                for window in NSApplication.shared.windows {
+                    if window.title == "Settings" || window.title == "ScreenRecorder" {
+                        window.level = .floating
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Section Builder

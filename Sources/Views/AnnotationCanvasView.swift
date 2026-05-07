@@ -36,7 +36,7 @@ struct AnnotationCanvasView: View {
                 }
 
                 // Gesture overlay
-                Color.clear
+                Color.white.opacity(0.001)
                     .contentShape(Rectangle())
                     .gesture(
                         DragGesture(minimumDistance: 0, coordinateSpace: .local)
@@ -90,16 +90,12 @@ struct AnnotationCanvasView: View {
                             }
                     )
 
-                // Inline glassmorphic text editing field
+                // Inline text editing field
                 if annotationState.isEditingText {
                     textInputField
-                        .position(
-                            x: min(
-                                max(annotationState.editingTextPosition.x + 140, 180),
-                                geometry.size.width - 180
-                            ),
-                            y: annotationState.editingTextPosition.y
-                        )
+                        .padding(.leading, annotationState.editingTextPosition.x)
+                        .padding(.top, annotationState.editingTextPosition.y)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
@@ -140,118 +136,63 @@ struct AnnotationCanvasView: View {
 
     @ViewBuilder
     private func selectionHighlight(for stroke: AnnotationStroke) -> some View {
-        let bounds = strokeBounds(stroke)
-        let padding: CGFloat = 8
-        RoundedRectangle(cornerRadius: 4)
-            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 3]))
-            .foregroundColor(.white.opacity(0.7))
-            .frame(width: bounds.width + padding * 2, height: bounds.height + padding * 2)
-            .position(x: bounds.midX, y: bounds.midY)
+        if let bounds = stroke.boundingRect {
+            ZStack {
+                // Dashed box
+                Rectangle()
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 3]))
+                    .foregroundColor(.white.opacity(0.7))
+                    .frame(width: bounds.width, height: bounds.height)
+                    .position(x: bounds.midX, y: bounds.midY)
+                
+                // 4 Corner Handles
+                let handleSize: CGFloat = 10
+                let points = [
+                    CGPoint(x: bounds.minX, y: bounds.minY),
+                    CGPoint(x: bounds.maxX, y: bounds.minY),
+                    CGPoint(x: bounds.minX, y: bounds.maxY),
+                    CGPoint(x: bounds.maxX, y: bounds.maxY)
+                ]
+                
+                ForEach(0..<4, id: \.self) { i in
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: handleSize, height: handleSize)
+                        .overlay(Circle().stroke(Color.blue, lineWidth: 2))
+                        .shadow(radius: 1)
+                        .position(x: points[i].x, y: points[i].y)
+                }
+            }
             .allowsHitTesting(false)
-    }
-
-    private func strokeBounds(_ stroke: AnnotationStroke) -> CGRect {
-        guard !stroke.points.isEmpty else { return .zero }
-        let xs = stroke.points.map(\.x)
-        let ys = stroke.points.map(\.y)
-        let minX = xs.min()!, maxX = xs.max()!
-        let minY = ys.min()!, maxY = ys.max()!
-        return CGRect(x: minX, y: minY, width: max(maxX - minX, 20), height: max(maxY - minY, 20))
+        }
     }
 
     // MARK: - Glassmorphic Text Input Field
 
     private var textInputField: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Multi-line text editor
+        ZStack(alignment: .topLeading) {
+            // Hidden text to size the container properly, with a default width for empty state
+            let displayText = annotationState.editingTextContent.isEmpty ? "      " : annotationState.editingTextContent + "  "
+            Text(displayText)
+                .font(.system(size: annotationState.textFontSize, weight: .semibold))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 8)
+                .opacity(0)
+                .layoutPriority(1)
+
             TextEditor(text: $annotationState.editingTextContent)
                 .font(.system(size: annotationState.textFontSize, weight: .semibold))
-                .foregroundColor(.primary)
+                .foregroundColor(annotationState.selectedColor)
                 .scrollContentBackground(.hidden)
                 .focused($isTextFieldFocused)
-                .frame(minWidth: 240, maxWidth: 400, minHeight: 40, maxHeight: 200)
-                .fixedSize(horizontal: false, vertical: true)
-
-            // Bottom bar with color indicator and actions
-            HStack(spacing: 8) {
-                // Color indicator
-                Circle()
-                    .fill(annotationState.selectedColor)
-                    .frame(width: 12, height: 12)
-
-                Text("⌘↩ to commit")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                // Font size indicator
-                Text("\(Int(annotationState.textFontSize))pt")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-
-                Button {
-                    annotationState.commitText()
-                    isTextFieldFocused = false
-                } label: {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(.green)
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    annotationState.cancelTextEditing()
-                    isTextFieldFocused = false
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(.red.opacity(0.8))
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.top, 4)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            ZStack {
-                // Glassmorphic blur background
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(.ultraThinMaterial)
-                    .environment(\.colorScheme, .dark)
-
-                // Gradient tint: more visible at bottom, fading up
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.black.opacity(0.35),
-                                Color.black.opacity(0.15),
-                                Color.black.opacity(0.05)
-                            ],
-                            startPoint: .bottom,
-                            endPoint: .top
-                        )
-                    )
-
-                // Color border
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                annotationState.selectedColor.opacity(0.7),
-                                annotationState.selectedColor.opacity(0.3),
-                                .white.opacity(0.15)
-                            ],
-                            startPoint: .bottom,
-                            endPoint: .top
-                        ),
-                        lineWidth: 1.5
-                    )
-            }
+        .fixedSize()
+        .background(Color.black.opacity(0.5))
+        .cornerRadius(3)
+        .overlay(
+            RoundedRectangle(cornerRadius: 3)
+                .strokeBorder(annotationState.selectedColor, lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.3), radius: 16, y: 6)
         // Handle keyboard shortcuts in the text field
         .onKeyPress(phases: .down) { press in
             // Cmd+Enter to commit

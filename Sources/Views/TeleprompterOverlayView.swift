@@ -3,13 +3,12 @@ import SwiftUI
 // MARK: - Teleprompter Overlay View
 
 /// The main teleprompter view rendered inside the floating NSPanel.
-/// - **Manual mode**: Slide-by-slide with transitions
-/// - **Auto-Scroll mode**: Continuous scroll at fixed WPM
-/// - **Voice-Follow mode**: Continuous scroll driven by voice alignment
 ///
-/// For continuous scroll modes, all text is uniformly white.
-/// The reading position is communicated by WHERE the text sits
-/// on screen (in the focus zone), not by per-word coloring.
+/// **Voice-Guided Slides** — unified system:
+/// - Slides are the unit of navigation (⌘F1/F2 for manual override)
+/// - When voice tracking is enabled, words highlight as the speaker says them
+/// - When all words in a slide are spoken, it auto-advances to the next slide
+/// - When voice tracking is off, it's pure manual slide navigation
 struct TeleprompterOverlayView: View {
     @ObservedObject var appState: AppState
     @ObservedObject var scrollController: AutoScrollController
@@ -21,23 +20,34 @@ struct TeleprompterOverlayView: View {
     private var settings: TeleprompterSettings { appState.teleprompterSettings }
     private var script: TeleprompterScript { appState.teleprompterScript }
 
+    private var safeAreaTopPadding: CGFloat {
+        if settings.placementMode == .dynamicIsland {
+            if let screen = NSScreen.main {
+                let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
+                // Give a tiny extra buffer (e.g., 4pt) below the notch
+                return menuBarHeight > 0 ? menuBarHeight + 4 : 37
+            }
+            return 37
+        }
+        return 0
+    }
+
     var body: some View {
+        let isDynamicIsland = settings.placementMode == .dynamicIsland
+
         ZStack {
             backgroundLayer
 
             GeometryReader { geo in
                 ZStack {
-                    contentForMode(in: geo)
-
-                    if scrollController.state == .finished {
-                        endOfScriptIndicator
-                    }
+                    slideContent(in: geo)
+                        .padding(.top, safeAreaTopPadding)
                 }
             }
 
             VStack {
                 Spacer()
-                if controlsVisible || isHovering {
+                if !settings.isClickThrough && (controlsVisible || isHovering) {
                     miniControlBar
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -45,33 +55,32 @@ struct TeleprompterOverlayView: View {
             .animation(.easeInOut(duration: 0.25), value: controlsVisible)
             .animation(.easeInOut(duration: 0.25), value: isHovering)
 
-            VStack {
-                Spacer()
-                progressBar
+            if !settings.isClickThrough {
+                VStack {
+                    Spacer()
+                    progressBar
+                }
+            }
+        }
+        // Dynamic Island: notch-wrapping shape
+        .clipShape(
+            isDynamicIsland
+                ? AnyShape(DynamicIslandShape())
+                : AnyShape(RoundedRectangle(cornerRadius: 0, style: .continuous))
+        )
+        .overlay {
+            if isDynamicIsland {
+                DynamicIslandShape()
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
             }
         }
         .onHover { hovering in
             isHovering = hovering
             if hovering { showControls() }
         }
-        .scaleEffect(x: settings.isMirrorMode ? -1 : 1, y: 1)
     }
 
-    // MARK: - Mode-Aware Content
-
-    @ViewBuilder
-    private func contentForMode(in geo: GeometryProxy) -> some View {
-        switch scrollController.mode {
-        case .manual:
-            slideContent(in: geo)
-        case .autoScroll:
-            autoScrollContent(in: geo)
-        case .voiceFollow:
-            voiceFollowContent(in: geo)
-        }
-    }
-
-    // MARK: - Manual Slide Content
+    // MARK: - Slide Content (with optional word highlighting)
 
     @ViewBuilder
     private func slideContent(in geo: GeometryProxy) -> some View {
@@ -81,28 +90,52 @@ struct TeleprompterOverlayView: View {
             if !scrollController.currentSlide.isEmpty {
                 VStack(spacing: 0) {
                     Spacer(minLength: 16)
-                    ScrollView(.vertical, showsIndicators: false) {
-                        Text(scrollController.currentSlide)
-                            .font(.system(size: settings.fontSize, weight: .medium))
-                            .lineSpacing(settings.fontSize * (settings.lineHeight - 1.0))
-                            .foregroundStyle(.white)
-                            .multilineTextAlignment(textMultilineAlignment)
-                            .frame(maxWidth: .infinity, alignment: textFrameAlignment)
-                            .padding(.horizontal, padding)
-                            .minimumScaleFactor(0.5)
+
+                    if scrollController.isVoiceTrackingEnabled {
+                        // Voice-tracked: individual words with opacity + auto-scroll
+                        voiceTrackedScrollView(padding: padding)
+                    } else {
+                        // Pure manual: slide text as a block with regular scrolling
+                        ScrollView(.vertical, showsIndicators: false) {
+                            Text(scrollController.currentSlide)
+                                .font(.system(size: settings.fontSize, weight: .medium))
+                                .lineSpacing(settings.fontSize * (settings.lineHeight - 1.0))
+                                .foregroundStyle(.white)
+                                .multilineTextAlignment(textMultilineAlignment)
+                                .frame(maxWidth: .infinity, alignment: textFrameAlignment)
+                                .padding(.horizontal, padding)
+                                .minimumScaleFactor(0.5)
+                        }
                     }
-                    .id(scrollController.currentSlideIndex)
-                    .transition(slideTransition)
-                    .animation(.easeInOut(duration: 0.3), value: scrollController.currentSlideIndex)
+
                     Spacer(minLength: 16)
                 }
+                .id(scrollController.currentSlideIndex)
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.3), value: scrollController.currentSlideIndex)
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0.0),
+                            .init(color: .black, location: 0.1),
+                            .init(color: .black, location: 0.9),
+                            .init(color: .clear, location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
             } else {
                 emptyState
             }
 
-            if scrollController.slideCount > 0 {
+            // Slide counter + status
+            if !settings.isClickThrough && scrollController.slideCount > 0 {
                 VStack {
                     HStack {
+                        if scrollController.isVoiceTrackingEnabled {
+                            voiceStatusIndicator
+                        }
                         Spacer()
                         slideCounter
                     }
@@ -110,148 +143,77 @@ struct TeleprompterOverlayView: View {
                 }
             }
 
-            if scrollController.state == .active {
+            // Navigation hints (always shown in active state unless click-through)
+            if !settings.isClickThrough && scrollController.state == .active {
                 slideNavigationHints
             }
         }
     }
 
-    // MARK: - Continuous Scroll Content (shared by Auto-Scroll and Voice-Follow)
+    // MARK: - Voice-Tracked ScrollView (with auto-scroll to current word)
 
     @ViewBuilder
-    private func continuousScrollContent(in geo: GeometryProxy, wordIndex: Int) -> some View {
-        let padding: CGFloat = max(24, geo.size.width * 0.08)
-        let words = scrollController.fullScriptWords
+    private func voiceTrackedScrollView(padding: CGFloat) -> some View {
+        let tracker = scrollController.voiceTracker
 
-        ZStack {
-            if !words.isEmpty {
-                ScrollViewReader { proxy in
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(spacing: 0) {
-                            Spacer()
-                                .frame(height: 16)
-
-                            WordFlowLayout(
-                                spacing: settings.fontSize * 0.3,
-                                lineSpacing: settings.fontSize * (settings.lineHeight - 1.0)
-                            ) {
-                                ForEach(Array(words.enumerated()), id: \.offset) { index, word in
-                                    Text(word)
-                                        .font(.system(size: settings.fontSize, weight: .medium))
-                                        .foregroundStyle(.white)
-                                        .id("word-\(index)")
-                                }
-                            }
-                            .padding(.horizontal, padding)
-
-                            Spacer()
-                                .frame(height: geo.size.height * 0.5)
-                        }
-                    }
-                    .scrollDisabled(true)
-                    .onChange(of: wordIndex) { _, newIndex in
-                        let clamped = max(0, min(newIndex, words.count - 1))
-                        withAnimation(.easeInOut(duration: 0.35)) {
-                            proxy.scrollTo("word-\(clamped)", anchor: UnitPoint(x: 0.5, y: 0.2))
-                        }
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                WordFlowLayout(
+                    spacing: settings.fontSize * 0.3,
+                    lineSpacing: settings.fontSize * (settings.lineHeight - 1.0)
+                ) {
+                    ForEach(Array(tracker.displayWords.enumerated()), id: \.offset) { index, word in
+                        Text(word)
+                            .font(.system(size: settings.fontSize, weight: .medium))
+                            .foregroundStyle(.white.opacity(opacityForWord(at: index, tracker: tracker)))
+                            .id(index)
+                            .animation(.easeOut(duration: 0.15), value: tracker.confirmedUpTo)
                     }
                 }
-
-                focusGuideOverlay(height: geo.size.height)
-            } else {
-                emptyState
+                .padding(.horizontal, padding)
+                .padding(.bottom, 60) // Extra space so last words can scroll up
             }
-        }
-    }
+            .onChange(of: tracker.confirmedUpTo) { _, newValue in
+                // Voice advanced — clear manual scroll so viewport follows voice
+                scrollController.clearManualScroll()
 
-    // MARK: - Auto-Scroll Content
-
-    @ViewBuilder
-    private func autoScrollContent(in geo: GeometryProxy) -> some View {
-        let engine = scrollController.autoScrollEngine
-        let wordIndex = autoScrollWordIndex(engine: engine)
-
-        ZStack {
-            continuousScrollContent(in: geo, wordIndex: wordIndex)
-
-            VStack {
-                HStack {
-                    wpmIndicator
-                    Spacer()
+                // Auto-scroll to keep the current word visible
+                let scrollTarget = min(newValue + 2, tracker.wordCount - 1)
+                guard scrollTarget >= 0 else { return }
+                withAnimation(.easeOut(duration: 0.25)) {
+                    proxy.scrollTo(scrollTarget, anchor: .center)
                 }
-                Spacer()
             }
-        }
-    }
-
-    /// Convert auto-scroll progress to a word index
-    private func autoScrollWordIndex(engine: AutoScrollEngine) -> Int {
-        let totalWords = scrollController.fullScriptWords.count
-        guard totalWords > 0 else { return 0 }
-        return min(Int(engine.progress * Double(totalWords)), totalWords - 1)
-    }
-
-    // MARK: - Voice-Follow Content
-
-    @ViewBuilder
-    private func voiceFollowContent(in geo: GeometryProxy) -> some View {
-        let engine = scrollController.voiceFollowEngine
-        let wordIndex = Int(engine.displayPosition)
-
-        ZStack {
-            continuousScrollContent(in: geo, wordIndex: wordIndex)
-
-            VStack {
-                HStack {
-                    voiceFollowStatusIndicator(engine: engine)
-                    Spacer()
-                    wordCounter
+            .onChange(of: scrollController.manualScrollTarget) { _, newTarget in
+                // Manual scroll (⌘F1/F2) — jump viewport to requested position
+                guard let target = newTarget, target >= 0, target < tracker.wordCount else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(target, anchor: .center)
                 }
-                Spacer()
             }
         }
     }
 
-    // MARK: - Focus Guide (top/bottom fade)
-
-    @ViewBuilder
-    private func focusGuideOverlay(height: CGFloat) -> some View {
-        let fadeHeight = height * 0.25
-
-        VStack(spacing: 0) {
-            LinearGradient(
-                stops: [
-                    .init(color: .black.opacity(0.85), location: 0),
-                    .init(color: .clear, location: 1)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: fadeHeight)
-            .allowsHitTesting(false)
-
-            Spacer()
-
-            LinearGradient(
-                stops: [
-                    .init(color: .clear, location: 0),
-                    .init(color: .black.opacity(0.85), location: 1)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: fadeHeight)
-            .allowsHitTesting(false)
+    /// Determines word opacity based on voice tracking state:
+    /// - Spoken words: full white (1.0)
+    /// - Current word (tentative): bright with subtle visual emphasis
+    /// - Upcoming words: dimmed (0.35)
+    private func opacityForWord(at index: Int, tracker: SlideVoiceTracker) -> Double {
+        if index < tracker.confirmedUpTo {
+            return 1.0      // Already spoken
         }
+        if let tentative = tracker.tentativeWord, index == tentative {
+            return 0.75     // Currently being spoken (speculative)
+        }
+        return 0.35         // Not yet spoken
     }
 
-    // MARK: - Status Indicators
+    // MARK: - Voice Status Indicator
 
-    @ViewBuilder
-    private func voiceFollowStatusIndicator(engine: VoiceFollowEngine) -> some View {
+    private var voiceStatusIndicator: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(statusColor(for: engine.state))
+                .fill(voiceStatusColor)
                 .frame(width: 8, height: 8)
 
             Text(scrollController.voiceFollowStatus)
@@ -261,26 +223,13 @@ struct TeleprompterOverlayView: View {
         .padding(10)
     }
 
-    private func statusColor(for state: VoiceFollowEngine.FollowState) -> Color {
-        switch state {
+    private var voiceStatusColor: Color {
+        switch scrollController.voiceTracker.state {
         case .idle:       return .gray
         case .tracking:   return .green
         case .adlibbing:  return .orange
-        case .lost:       return .red.opacity(0.7)
+        case .paused:     return .yellow
         }
-    }
-
-    private var wpmIndicator: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "scroll")
-                .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.5))
-
-            Text("\(Int(scrollController.autoScrollEngine.wordsPerMinute)) WPM")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.6))
-        }
-        .padding(10)
     }
 
     // MARK: - Empty State
@@ -303,16 +252,6 @@ struct TeleprompterOverlayView: View {
 
     private var slideCounter: some View {
         Text(scrollController.slideProgressText)
-            .font(.system(size: 11, weight: .medium, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.5))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(.white.opacity(0.1)))
-            .padding(12)
-    }
-
-    private var wordCounter: some View {
-        Text(scrollController.progressText)
             .font(.system(size: 11, weight: .medium, design: .monospaced))
             .foregroundStyle(.white.opacity(0.5))
             .padding(.horizontal, 8)
@@ -347,108 +286,66 @@ struct TeleprompterOverlayView: View {
         }
     }
 
-    private var slideTransition: AnyTransition {
-        switch settings.slideTransition {
-        case .fade:    return .opacity
-        case .slide:
-            return .asymmetric(
-                insertion: .move(edge: .trailing).combined(with: .opacity),
-                removal: .move(edge: .leading).combined(with: .opacity)
-            )
-        case .instant: return .identity
-        }
-    }
 
     // MARK: - Background
 
     @ViewBuilder
     private var backgroundLayer: some View {
-        switch settings.backgroundStyle {
-        case .transparent:
-            Color.clear
-        case .frosted:
-            ZStack {
-                VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
-                Color.black.opacity(0.25)
+        if settings.placementMode == .dynamicIsland {
+            // Native Dynamic Island: pure black
+            Color.black
+        } else {
+            switch settings.backgroundStyle {
+
+            case .frosted:
+                ZStack {
+                    VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
+                    Color.black.opacity(0.25)
+                }
+            case .solid:
+                Color(nsColor: NSColor(white: 0.08, alpha: 1.0))
             }
-        case .solid:
-            Color(nsColor: NSColor(white: 0.08, alpha: 1.0))
         }
     }
 
-    // MARK: - End of Script
-
-    private var endOfScriptIndicator: some View {
-        VStack(spacing: 8) {
-            Spacer()
-            HStack(spacing: 6) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                Text("End of Script")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(.ultraThinMaterial)
-            .clipShape(Capsule())
-            .padding(.bottom, 48)
-        }
-    }
 
     // MARK: - Mini Control Bar
 
     private var miniControlBar: some View {
         HStack(spacing: 12) {
-            switch scrollController.mode {
-            case .manual:
-                Button(action: { scrollController.previousSlide() }) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.white.opacity(scrollController.isFirstSlide ? 0.2 : 0.7))
-                }
-                .buttonStyle(.plain)
-                .disabled(scrollController.isFirstSlide)
+            // Slide navigation (always available)
+            Button(action: { scrollController.previousSlide() }) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.white.opacity(scrollController.isFirstSlide ? 0.2 : 0.7))
+            }
+            .buttonStyle(.plain)
+            .disabled(scrollController.isFirstSlide)
 
-                Text(scrollController.slideProgressText)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.6))
+            Text(scrollController.slideProgressText)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.6))
 
-                Button(action: { scrollController.nextSlide() }) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.white.opacity(scrollController.isLastSlide ? 0.2 : 0.7))
-                }
-                .buttonStyle(.plain)
-                .disabled(scrollController.isLastSlide)
+            Button(action: { scrollController.nextSlide() }) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.white.opacity(scrollController.isLastSlide ? 0.2 : 0.7))
+            }
+            .buttonStyle(.plain)
+            .disabled(scrollController.isLastSlide)
 
-            case .autoScroll:
-                Button(action: { scrollController.nudgeSpeed(faster: false) }) {
-                    Image(systemName: "tortoise")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.6))
-                }
-                .buttonStyle(.plain)
+            // Voice tracking status (if enabled)
+            if scrollController.isVoiceTrackingEnabled {
+                Divider()
+                    .frame(height: 16)
 
-                Text("\(Int(scrollController.autoScrollEngine.wordsPerMinute)) WPM")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.6))
-
-                Button(action: { scrollController.nudgeSpeed(faster: true) }) {
-                    Image(systemName: "hare")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.6))
-                }
-                .buttonStyle(.plain)
-
-            case .voiceFollow:
                 Circle()
-                    .fill(statusColor(for: scrollController.voiceFollowEngine.state))
-                    .frame(width: 8, height: 8)
+                    .fill(voiceStatusColor)
+                    .frame(width: 6, height: 6)
 
                 Text(scrollController.progressText)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.5))
             }
 
             Text("\(Int(scrollController.progress * 100))%")
@@ -586,5 +483,70 @@ struct WordFlowLayout: Layout {
             positions: positions,
             size: CGSize(width: maxX, height: y + lineHeight)
         )
+    }
+}
+
+// MARK: - Dynamic Island Shape
+
+/// A custom shape that visually wraps the MacBook notch.
+/// It has concave top corners and convex bottom corners.
+struct DynamicIslandShape: Shape {
+    var topInset: CGFloat = 16
+    var bottomRadius: CGFloat = 18
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(topInset, bottomRadius) }
+        set {
+            topInset = newValue.first
+            bottomRadius = newValue.second
+        }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width
+        let h = rect.height
+        let t = topInset
+        let br = bottomRadius
+        var p = Path()
+
+        // Start at top-left corner
+        p.move(to: CGPoint(x: 0, y: 0))
+
+        // Top-left curve: from (0,0) curve down-right to (t, t)
+        p.addQuadCurve(
+            to: CGPoint(x: t, y: t),
+            control: CGPoint(x: t, y: 0)
+        )
+
+        // Left edge down
+        p.addLine(to: CGPoint(x: t, y: h - br))
+
+        // Bottom-left convex corner
+        p.addQuadCurve(
+            to: CGPoint(x: t + br, y: h),
+            control: CGPoint(x: t, y: h)
+        )
+
+        // Bottom edge
+        p.addLine(to: CGPoint(x: w - t - br, y: h))
+
+        // Bottom-right convex corner
+        p.addQuadCurve(
+            to: CGPoint(x: w - t, y: h - br),
+            control: CGPoint(x: w - t, y: h)
+        )
+
+        // Right edge up
+        p.addLine(to: CGPoint(x: w - t, y: t))
+
+        // Top-right curve: from (w-t, t) curve up-right to (w, 0)
+        p.addQuadCurve(
+            to: CGPoint(x: w, y: 0),
+            control: CGPoint(x: w - t, y: 0)
+        )
+
+        // Top edge back to start
+        p.closeSubpath()
+        return p
     }
 }

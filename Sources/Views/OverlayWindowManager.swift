@@ -17,6 +17,7 @@ class OverlayWindowManager {
     private var windowMoveObserver: Any?
     private var teleprompterMoveObserver: Any?
     private var teleprompterResizeObserver: Any?
+    private var teleprompterPlacementObserver: Any?
 
     /// Callback for annotation screenshot — set by RecordingCoordinator
     var onAnnotationScreenshot: (() -> Void)?
@@ -423,11 +424,11 @@ class OverlayWindowManager {
 
     /// Toggle the annotation window between interactive (drawing) and click-through (passthrough) modes
     func setAnnotationInteractive(_ active: Bool) {
-        guard let window = annotationWindow else {
-            // If activating and no window exists yet, create it
-            if active { showAnnotationOverlay() }
-            return
+        if annotationWindow == nil {
+            if active { showAnnotationOverlay() } else { return }
         }
+        
+        guard let window = annotationWindow else { return }
 
         if active {
             window.ignoresMouseEvents = false
@@ -451,7 +452,7 @@ class OverlayWindowManager {
         let hostingView = NSHostingView(rootView: canvasView)
         hostingView.frame = NSRect(x: 0, y: 0, width: screenFrame.width, height: screenFrame.height)
 
-        let window = NSWindow(
+        let window = InteractiveOverlayWindow(
             contentRect: screenFrame,
             styleMask: [.borderless],
             backing: .buffered,
@@ -570,6 +571,10 @@ class OverlayWindowManager {
             NotificationCenter.default.removeObserver(obs)
             teleprompterResizeObserver = nil
         }
+        if let obs = teleprompterPlacementObserver {
+            NotificationCenter.default.removeObserver(obs)
+            teleprompterPlacementObserver = nil
+        }
         persistTeleprompterFrame()
         teleprompterWindow?.orderOut(nil)
         teleprompterWindow = nil
@@ -590,34 +595,55 @@ class OverlayWindowManager {
 
     private func createTeleprompterWindow(appState: AppState) {
         let settings = appState.teleprompterSettings
-        let frame = settings.windowFrame ?? defaultTeleprompterFrame()
+        let frame = frameForPlacement(settings)
+        let isDynamic = settings.placementMode == .dynamicIsland
+
+        // Dynamic Island: borderless for a clean pill shape, just like textream.
+        // Others: titled + resizable for standard window controls.
+        let styleMask: NSWindow.StyleMask = isDynamic
+            ? [.borderless, .nonactivatingPanel]
+            : [.titled, .closable, .resizable, .nonactivatingPanel, .utilityWindow, .fullSizeContentView]
 
         let panel = NSPanel(
             contentRect: frame,
-            styleMask: [.titled, .closable, .resizable, .nonactivatingPanel, .utilityWindow, .fullSizeContentView],
+            styleMask: styleMask,
             backing: .buffered,
             defer: false
         )
 
-        panel.level = settings.isAlwaysOnTop ? .floating : .normal
+        // Dynamic Island: .screenSaver level allows drawing perfectly over the menu bar / notch.
+        if isDynamic {
+            panel.level = .screenSaver
+        } else {
+            panel.level = .floating // Always on top by default
+        }
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.isMovableByWindowBackground = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hasShadow = !isDynamic // No shadow for Dynamic Island — pure pill
+        if isDynamic {
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        } else {
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        }
         panel.isReleasedWhenClosed = false
         panel.alphaValue = settings.opacity
         panel.ignoresMouseEvents = settings.isClickThrough
-        panel.minSize = NSSize(width: 300, height: 200)
+        panel.minSize = NSSize(width: 200, height: 100)
+
+        // Dynamic Island: locked in place, not movable
+        panel.isMovableByWindowBackground = !isDynamic
 
         // Determine sharing type: demo mode overrides exclusion
         panel.sharingType = Self.sharingType(for: settings)
 
-        // Clean title bar
+        // Clean title bar (for non-borderless modes)
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
+        // Show close button only if it's not dynamic island and NOT in click-through mode
+        // Wait, user asked to show title bar for click-through mode, so we just check isDynamic
+        panel.standardWindowButton(.closeButton)?.isHidden = isDynamic
 
         let overlayView = TeleprompterOverlayView(
             appState: appState,
@@ -628,14 +654,18 @@ class OverlayWindowManager {
 
         teleprompterWindow = panel
 
-        // Persist position on move
+        // Persist position on move (only for non-locked modes)
         teleprompterMoveObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didMoveNotification,
             object: panel,
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.persistTeleprompterFrame()
+                guard let self, let state = self.appState else { return }
+                // Don't persist position for fixed placement modes
+                if state.teleprompterSettings.placementMode == .floating {
+                    self.persistTeleprompterFrame()
+                }
             }
         }
 
@@ -646,7 +676,21 @@ class OverlayWindowManager {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.persistTeleprompterFrame()
+                guard let self, let state = self.appState else { return }
+                if state.teleprompterSettings.placementMode == .floating {
+                    self.persistTeleprompterFrame()
+                }
+            }
+        }
+
+        // Observe placement mode changes from Settings
+        teleprompterPlacementObserver = NotificationCenter.default.addObserver(
+            forName: .teleprompterPlacementChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.applyTeleprompterPlacement()
             }
         }
     }
@@ -655,10 +699,79 @@ class OverlayWindowManager {
     private func applyTeleprompterSettings(_ settings: TeleprompterSettings) {
         guard let panel = teleprompterWindow else { return }
         panel.alphaValue = settings.opacity
-        panel.level = settings.isAlwaysOnTop ? .floating : .normal
+        panel.level = .floating
         panel.ignoresMouseEvents = settings.isClickThrough
         panel.sharingType = Self.sharingType(for: settings)
     }
+
+    /// Reposition the teleprompter for the current placement mode.
+    /// Recreates the window when switching to/from Dynamic Island
+    /// (because NSWindow.styleMask can't be changed between borderless and titled).
+    func applyTeleprompterPlacement() {
+        guard let appState = appState else { return }
+        let wasVisible = teleprompterWindow?.isVisible == true
+
+        // Destroy and recreate to apply new styleMask
+        destroyTeleprompter()
+        createTeleprompterWindow(appState: appState)
+
+        if wasVisible {
+            teleprompterWindow?.orderFrontRegardless()
+        }
+    }
+
+    /// Compute the window frame for a given placement mode.
+    private func frameForPlacement(_ settings: TeleprompterSettings) -> CGRect {
+        switch settings.placementMode {
+        case .dynamicIsland:
+            return dynamicIslandFrame()
+
+        case .presentationTop:
+            return presentationTopFrame()
+
+        case .floating:
+            // Use saved position or default center
+            return settings.windowFrame ?? defaultTeleprompterFrame()
+        }
+    }
+
+    /// Dynamic Island: compact pill-shaped window pinned to the very top center
+    /// of the screen, flush against the top edge, overlapping the notch area.
+    private func dynamicIslandFrame() -> CGRect {
+        let screen = NSScreen.main ?? NSScreen.screens.first
+        guard let screen else { return defaultTeleprompterFrame() }
+
+        let screenFrame = screen.frame
+
+        // Compact pill dimensions — wide enough for text, short enough to feel native
+        let width: CGFloat = min(420, screenFrame.width * 0.30)
+        let height: CGFloat = min(320, screenFrame.height * 0.28)
+        let x = screenFrame.midX - width / 2
+
+        // Flush against the very top of the screen
+        let y = screenFrame.maxY - height
+
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    /// Presentation Top: wide and narrow strip at top of screen
+    private func presentationTopFrame() -> CGRect {
+        let screen = NSScreen.main ?? NSScreen.screens.first
+        guard let screen else { return defaultTeleprompterFrame() }
+
+        let screenFrame = screen.frame
+        let visibleFrame = screen.visibleFrame
+        let menuBarHeight = screenFrame.maxY - visibleFrame.maxY
+        let topInset = menuBarHeight + 4
+
+        let width = screenFrame.width * 0.75
+        let height: CGFloat = 280
+        let x = screenFrame.midX - width / 2
+        let y = screenFrame.maxY - topInset - height
+
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
 
     /// Default frame: center of main screen, 420×600
     private func defaultTeleprompterFrame() -> CGRect {
@@ -683,8 +796,7 @@ class OverlayWindowManager {
     /// Compute correct NSWindowSharingType for a given set of settings.
     /// Demo Mode (`isVisibleInRecordings`) takes priority and forces `.readOnly`.
     static func sharingType(for settings: TeleprompterSettings) -> NSWindow.SharingType {
-        if settings.isVisibleInRecordings { return .readOnly }
-        return settings.isExcludedFromRecording ? .none : .readOnly
+        return settings.isVisibleInRecordings ? .readOnly : .none
     }
 
     /// Update the live teleprompter panel's sharing type in-place.
@@ -763,5 +875,19 @@ class OverlayWindowManager {
 
         panel.contentView = hostingView
         teleprompterControlWindow = panel
+    }
+}
+
+// MARK: - InteractiveOverlayWindow
+
+/// A custom NSWindow subclass that allows borderless transparent windows
+/// to become the key window and reliably receive mouse/keyboard events.
+class InteractiveOverlayWindow: NSWindow {
+    override var canBecomeKey: Bool {
+        return true
+    }
+    
+    override var canBecomeMain: Bool {
+        return true
     }
 }

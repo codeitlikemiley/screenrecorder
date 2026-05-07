@@ -202,6 +202,18 @@ class AppState: ObservableObject {
                 TeleprompterSettingsStore.shared.save(settings)
             }
             .store(in: &saveCancellables)
+
+        // Auto-enable teleprompter service based on script content
+        $teleprompterScript
+            .receive(on: RunLoop.main)
+            .sink { [weak self] script in
+                guard let self = self else { return }
+                let hasContent = !script.isEmpty
+                if self.isTeleprompterEnabled != hasContent {
+                    self.isTeleprompterEnabled = hasContent
+                }
+            }
+            .store(in: &saveCancellables)
     }
 
     // MARK: - Mic Volume Control

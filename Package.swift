@@ -9,14 +9,12 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "2.2.3"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
-        .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", from: "0.9.0"),
     ],
     targets: [
         .executableTarget(
             name: "ScreenRecorder",
             dependencies: [
                 "KeyboardShortcuts",
-                .product(name: "WhisperKit", package: "argmax-oss-swift"),
             ],
             path: "Sources",
             exclude: ["CLI", "MCP"],

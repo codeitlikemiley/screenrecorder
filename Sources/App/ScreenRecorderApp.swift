@@ -4,6 +4,7 @@ import AppKit
 /// Notification posted by the ⌘, hotkey to open Settings
 extension Notification.Name {
     static let openSettings = Notification.Name("com.screenrecorder.openSettings")
+    static let teleprompterPlacementChanged = Notification.Name("com.screenrecorder.teleprompterPlacementChanged")
 }
 
 /// Main application entry point.
@@ -188,22 +189,21 @@ struct MenuBarView: View {
             ))
             .disabled(!isLicensed)
 
-            if appState.isTeleprompterEnabled {
-                Button(coordinator.overlayManager.isTeleprompterVisible
-                    ? "👁 Hide Teleprompter  ⌘F4"
-                    : "👁 Show Teleprompter  ⌘F4"
-                ) {
-                    coordinator.toggleTeleprompterVisibility()
-                }
+            Button(coordinator.overlayManager.isTeleprompterVisible
+                ? "👁 Hide Teleprompter  ⌘F3"
+                : "👁 Show Teleprompter  ⌘F3"
+            ) {
+                coordinator.toggleTeleprompterVisibility()
             }
+            .disabled(!isLicensed)
 
             // Edit Script — always accessible (independent of overlay visibility)
-            Button("📝 Edit Script  ⌘F5") {
+            Button("📝 Edit Script  ⌘F4") {
                 coordinator.toggleEditScript()
             }
             .disabled(!isLicensed)
 
-            if appState.isTeleprompterEnabled && appState.teleprompterSettings.mode == .manual {
+            if appState.isTeleprompterEnabled {
                 HStack {
                     Button("◀ Prev  ⌘F1") {
                         coordinator.teleprompterPrevSlide()
@@ -228,7 +228,7 @@ struct MenuBarView: View {
             }
 
             SettingsLink {
-                Text("⚙️ Settings...  ⌘,")
+                Text("⚙️ Settings...  ⌘F5")
             }
 
             Button("Quit") {
@@ -237,11 +237,8 @@ struct MenuBarView: View {
             .keyboardShortcut("q")
         }
         .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
+            NSApp.activate(ignoringOtherApps: true)
             openSettings()
         }
-    }
-
-    private var scrollControllerState: AutoScrollController.ScrollState {
-        appState.autoScrollController.state
     }
 }
