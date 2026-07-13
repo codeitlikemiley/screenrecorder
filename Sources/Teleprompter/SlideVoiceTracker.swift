@@ -37,7 +37,7 @@ class SlideVoiceTracker: ObservableObject {
     // MARK: - Configuration
 
     /// Consecutive NEW words that fail to match before entering adlib state
-    private let adlibMissThreshold: Int = 6
+    private let adlibMissThreshold: Int = 3 // Reduced from 6 for faster resync
 
     // MARK: - Internal
 
@@ -123,18 +123,15 @@ class SlideVoiceTracker: ObservableObject {
         lastCumulativeCount = words.count
 
         // ── Forward-only matching ──
-        // For each new spoken word, try to match script[confirmedUpTo].
-        // Normal: tight lookahead (pos + 2) prevents overshoot.
-        // Adlibbing/Paused: scan entire remaining slide to allow re-sync
-        //   from anywhere (e.g. user scrolled ahead with ⌘F2 and resumed speaking).
-        let isResyncMode = (state == .adlibbing || state == .paused)
-        let currentLookAhead = isResyncMode ? (normalizedWords.count - confirmedUpTo) : 2
-
         for word in newWords {
             guard confirmedUpTo < normalizedWords.count else { break }
 
             let spoken = Self.normalise(word.text)
             if spoken.isEmpty { continue }
+
+            // Evaluate lookahead dynamically per word (in case state changes mid-burst)
+            let isResyncMode = (state == .adlibbing || state == .paused)
+            let currentLookAhead = isResyncMode ? (normalizedWords.count - confirmedUpTo) : 8
 
             let pos = confirmedUpTo
             let searchEnd = min(normalizedWords.count, pos + currentLookAhead)
@@ -144,6 +141,7 @@ class SlideVoiceTracker: ObservableObject {
                 if Self.wordMatch(spoken, normalizedWords[idx]) {
                     confirmedUpTo = idx + 1
                     consecutiveMisses = 0
+                    if state == .adlibbing { state = .tracking }
                     matched = true
                     print("✅ [\(confirmedUpTo)/\(wordCount)] \"\(spoken)\" → \"\(normalizedWords[idx])\"")
                     break
@@ -153,21 +151,15 @@ class SlideVoiceTracker: ObservableObject {
             if !matched {
                 consecutiveMisses += 1
                 print("❌ miss [\(consecutiveMisses)] \"\(spoken)\" ≠ \"\(pos < normalizedWords.count ? normalizedWords[pos] : "END")\"")
+                if consecutiveMisses >= adlibMissThreshold && state != .adlibbing {
+                    state = .adlibbing
+                    print("🎭 SlideVoiceTracker: adlibbing (missed \(consecutiveMisses) words)")
+                }
             }
         }
 
         // Update tentative (the next expected word)
         tentativeWord = confirmedUpTo < normalizedWords.count ? confirmedUpTo : nil
-
-        // Adlib detection
-        if consecutiveMisses >= adlibMissThreshold {
-            if state != .adlibbing {
-                state = .adlibbing
-                print("🎭 SlideVoiceTracker: adlibbing (missed \(consecutiveMisses) words)")
-            }
-        } else if state == .adlibbing && consecutiveMisses == 0 {
-            state = .tracking
-        }
 
         // Slide complete?
         if confirmedUpTo >= normalizedWords.count {
