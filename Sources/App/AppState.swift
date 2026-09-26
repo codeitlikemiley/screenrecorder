@@ -243,20 +243,28 @@ class AppState: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
     }
 
-    // MARK: - Recording Timer (wall-clock based — never pauses)
+    // MARK: - Recording Timer (wall-clock based, excluding paused time)
 
     private var recordingStartDate: Date?
+    private var pausedTotal: TimeInterval = 0
+    private var pausedAt: Date?
+
+    private func elapsedExcludingPauses(from start: Date) -> TimeInterval {
+        Date().timeIntervalSince(start) - pausedTotal
+    }
 
     func startRecordingTimer() {
         recordingDuration = 0
         recordingStartDate = Date()
+        pausedTotal = 0
+        pausedAt = nil
 
         // Use DispatchSourceTimer on common RunLoop modes so it doesn't
         // pause when the menu bar is open
         recordingTimer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self, let start = self.recordingStartDate else { return }
-                self.recordingDuration = floor(Date().timeIntervalSince(start))
+                self.recordingDuration = floor(self.elapsedExcludingPauses(from: start))
             }
         }
         // Add to .common mode so it fires even when tracking menus
@@ -272,13 +280,19 @@ class AppState: ObservableObject {
     func pauseRecordingTimer() {
         recordingTimer?.invalidate()
         recordingTimer = nil
+        if pausedAt == nil { pausedAt = Date() }
     }
 
     func resumeRecordingTimer() {
+        if let pausedAt {
+            pausedTotal += Date().timeIntervalSince(pausedAt)
+            self.pausedAt = nil
+        }
+        recordingTimer?.invalidate()
         recordingTimer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self, let start = self.recordingStartDate else { return }
-                self.recordingDuration = floor(Date().timeIntervalSince(start))
+                self.recordingDuration = floor(self.elapsedExcludingPauses(from: start))
             }
         }
         RunLoop.main.add(recordingTimer!, forMode: .common)

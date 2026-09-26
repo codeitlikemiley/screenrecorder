@@ -44,6 +44,8 @@ struct RecordingSession: Codable {
 
     /// Interaction events summary
     var eventSummary: EventSummary
+    /// Where the recorded content was on screen (maps event positions onto frames)
+    var captureGeometry: CaptureGeometry? = nil
 
     // MARK: - Processing State
 
@@ -62,6 +64,7 @@ struct RecordingSession: Codable {
         let filename: String
         let timestamp: TimeInterval
         let trigger: String        // What caused this frame to be captured
+        var actionIndex: Int? = nil // 1-based aggregated action this frame shows, if any
     }
 
     struct EventSummary: Codable {

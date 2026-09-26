@@ -58,8 +58,10 @@ class EventAggregator {
 
             case .mouseClick(let click):
                 // Keep clicks as individual actions (they're usually meaningful)
+                let clickType: AggregatedAction.ActionType =
+                    click.button == .right ? .rightClick : (click.clickCount > 1 ? .doubleClick : .click)
                 let action = AggregatedAction(
-                    actionType: click.clickCount > 1 ? .doubleClick : .click,
+                    actionType: clickType,
                     startTimestamp: click.timestamp,
                     endTimestamp: click.timestamp,
                     description: click.button == .right ? "Right-click" : "Click",
@@ -119,6 +121,17 @@ class EventAggregator {
         while i < events.count {
             guard case .keystroke(let ks) = events[i] else { break }
 
+            // A command/control/option chord is its own action: it ends a typing run,
+            // and when it starts one it is consumed alone as a shortcut.
+            if isChord(ks) {
+                if keystrokes.isEmpty {
+                    keystrokes.append(ks)
+                    rawEvents.append(events[i])
+                    i += 1
+                }
+                break
+            }
+
             // Check time gap from previous keystroke
             if let last = keystrokes.last {
                 let gap = ks.timestamp - last.timestamp
@@ -148,7 +161,7 @@ class EventAggregator {
         let typedText = buildTypedText(from: keystrokes)
 
         // Determine if this is a shortcut (modifier + single key)
-        let isShortcut = keystrokes.count == 1 && !keystrokes[0].modifiers.isEmpty
+        let isShortcut = keystrokes.count == 1 && isChord(keystrokes[0])
 
         let description: String
         let actionType: AggregatedAction.ActionType
@@ -204,7 +217,7 @@ class EventAggregator {
                 default:
                     text += "[\(ks.key)]"
                 }
-            } else if !ks.modifiers.isEmpty {
+            } else if isChord(ks) {
                 // Modifier combo — show as-is
                 let mods = ks.modifiers.joined()
                 text += "\(mods)\(ks.key)"
@@ -213,6 +226,11 @@ class EventAggregator {
             }
         }
         return text
+    }
+
+    /// Modifiers other than Shift turn a key into a shortcut rather than typed text.
+    private func isChord(_ ks: KeystrokeLogEvent) -> Bool {
+        ks.modifiers.contains { !["⇧", "shift"].contains($0.lowercased()) }
     }
 
     /// Check if a keystroke is a form navigation key
@@ -341,7 +359,7 @@ class EventAggregator {
     // MARK: - Speech Correlation
 
     /// Attach transcript segments to actions whose time ranges overlap.
-    private func attachSpeech(
+    func attachSpeech(
         transcript: SpeechTranscriber.TranscriptResult,
         to actions: [AggregatedAction]
     ) -> [AggregatedAction] {

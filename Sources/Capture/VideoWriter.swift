@@ -19,6 +19,20 @@ class VideoWriter {
     private var firstTimestamp: CMTime?
     private var frameCount = 0
 
+    // Pause support (all accessed on writerQueue). Timestamps are host-clock seconds, the same
+    // timebase ScreenCaptureKit stamps buffers with. Buffers captured while paused are dropped
+    // and everything after is shifted back by the total paused time, so the file has no gap.
+    private var pausedAt: Double?
+    private var lastPauseInterval: ClosedRange<Double>?
+    private var pauseOffset: Double = 0
+    private var lastVideoPTS: CMTime?
+
+    /// Host-clock time (seconds) of the first video frame, i.e. t = 0 of the output file.
+    /// Used to align the interaction log with the video.
+    var firstFrameHostTime: Double? {
+        writerQueue.sync { firstTimestamp?.seconds }
+    }
+
     private let outputFormat: OutputFormat
     private let outputURL: URL
 
@@ -153,8 +167,62 @@ class VideoWriter {
         sessionStarted = false
         firstTimestamp = nil
         frameCount = 0
+        pausedAt = nil
+        lastPauseInterval = nil
+        pauseOffset = 0
+        lastVideoPTS = nil
 
         print("  📝 Asset writer started (status: \(writer.status.rawValue))")
+    }
+
+    // MARK: - Pause / Resume
+
+    func setPaused(_ paused: Bool) {
+        let now = InteractionLogger.hostNow()
+        writerQueue.sync {
+            if paused {
+                if pausedAt == nil { pausedAt = now }
+            } else if let start = pausedAt {
+                pauseOffset += now - start
+                lastPauseInterval = start...now
+                pausedAt = nil
+            }
+        }
+    }
+
+    /// Whether a buffer stamped `seconds` (host clock) falls in a paused span. Call on writerQueue.
+    private func isInPausedSpan(_ seconds: Double) -> Bool {
+        if let pausedAt, seconds >= pausedAt { return true }
+        if let span = lastPauseInterval, span.contains(seconds) { return true }
+        return false
+    }
+
+    /// Shift a sample buffer back by the accumulated pause time. Call on writerQueue.
+    private func retimed(_ buffer: CMSampleBuffer) -> CMSampleBuffer? {
+        guard pauseOffset > 0 else { return buffer }
+        var count: CMItemCount = 0
+        CMSampleBufferGetSampleTimingInfoArray(buffer, entryCount: 0, arrayToFill: nil, entriesNeededOut: &count)
+        guard count > 0 else { return buffer }
+        var timing = [CMSampleTimingInfo](repeating: CMSampleTimingInfo(), count: count)
+        guard CMSampleBufferGetSampleTimingInfoArray(buffer, entryCount: count, arrayToFill: &timing, entriesNeededOut: &count) == noErr else {
+            return nil
+        }
+        let offset = CMTime(seconds: pauseOffset, preferredTimescale: 1_000_000_000)
+        for i in timing.indices {
+            timing[i].presentationTimeStamp = CMTimeSubtract(timing[i].presentationTimeStamp, offset)
+            if timing[i].decodeTimeStamp.isValid {
+                timing[i].decodeTimeStamp = CMTimeSubtract(timing[i].decodeTimeStamp, offset)
+            }
+        }
+        var out: CMSampleBuffer?
+        CMSampleBufferCreateCopyWithNewTiming(
+            allocator: kCFAllocatorDefault,
+            sampleBuffer: buffer,
+            sampleTimingEntryCount: count,
+            sampleTimingArray: &timing,
+            sampleBufferOut: &out
+        )
+        return out
     }
 
     // MARK: - Camera Frame Update
@@ -176,8 +244,14 @@ class VideoWriter {
                   writer.status == .writing,
                   let videoInput = videoInput else { return }
 
-            let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-            guard timestamp.isValid && !timestamp.isIndefinite else { return }
+            let captureTimestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            guard captureTimestamp.isValid && !captureTimestamp.isIndefinite else { return }
+            guard !isInPausedSpan(captureTimestamp.seconds) else { return }
+            let timestamp = pauseOffset > 0
+                ? CMTimeSubtract(captureTimestamp, CMTime(seconds: pauseOffset, preferredTimescale: 1_000_000_000))
+                : captureTimestamp
+            // Timestamps must strictly increase (a late pre-pause frame could otherwise go backwards).
+            if let last = lastVideoPTS, CMTimeCompare(timestamp, last) <= 0 { return }
 
             // Start session with first valid timestamp
             if !sessionStarted {
@@ -229,6 +303,7 @@ class VideoWriter {
             if videoInput.isReadyForMoreMediaData {
                 let success = pixelBufferAdaptor?.append(finalPixelBuffer, withPresentationTime: timestamp) ?? false
                 if success {
+                    lastVideoPTS = timestamp
                     frameCount += 1
                     if frameCount % 150 == 0 {
                         print("  📹 Frames written: \(frameCount) (time: \(String(format: "%.1f", timestamp.seconds - (firstTimestamp?.seconds ?? 0)))s)")
@@ -289,36 +364,12 @@ class VideoWriter {
 
     func appendAudioBuffer(_ sampleBuffer: CMSampleBuffer) {
         guard isWriting, sessionStarted else { return }
-
-        writerQueue.sync {
-            guard let audioInput = audioInput,
-                  let writer = assetWriter,
-                  writer.status == .writing else { return }
-
-            let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-            guard timestamp.isValid && !timestamp.isIndefinite else { return }
-
-            if audioInput.isReadyForMoreMediaData {
-                audioInput.append(sampleBuffer)
-            }
-        }
+        writerQueue.sync { appendAudioLocked(sampleBuffer, to: audioInput) }
     }
 
     func appendMicBuffer(_ sampleBuffer: CMSampleBuffer) {
         guard isWriting, sessionStarted else { return }
-
-        writerQueue.sync {
-            guard let micInput = micInput,
-                  let writer = assetWriter,
-                  writer.status == .writing else { return }
-
-            let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-            guard timestamp.isValid && !timestamp.isIndefinite else { return }
-
-            if micInput.isReadyForMoreMediaData {
-                micInput.append(sampleBuffer)
-            }
-        }
+        writerQueue.sync { appendAudioLocked(sampleBuffer, to: micInput) }
     }
 
     /// Append mic buffer with gain applied (volume scaling)
@@ -329,17 +380,22 @@ class VideoWriter {
             appendMicBuffer(sampleBuffer)
             return
         }
-        writerQueue.sync {
-            guard let micInput = micInput,
-                  let writer = assetWriter,
-                  writer.status == .writing else { return }
+        writerQueue.sync { appendAudioLocked(scaledBuffer, to: micInput) }
+    }
 
-            let timestamp = CMSampleBufferGetPresentationTimeStamp(scaledBuffer)
-            guard timestamp.isValid && !timestamp.isIndefinite else { return }
+    /// Shared audio path: drop paused audio, shift for earlier pauses, append. Call on writerQueue.
+    private func appendAudioLocked(_ sampleBuffer: CMSampleBuffer, to input: AVAssetWriterInput?) {
+        guard let input,
+              let writer = assetWriter,
+              writer.status == .writing else { return }
 
-            if micInput.isReadyForMoreMediaData {
-                micInput.append(scaledBuffer)
-            }
+        let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        guard timestamp.isValid && !timestamp.isIndefinite else { return }
+        guard !isInPausedSpan(timestamp.seconds) else { return }
+        guard let buffer = retimed(sampleBuffer) else { return }
+
+        if input.isReadyForMoreMediaData {
+            input.append(buffer)
         }
     }
 
@@ -355,6 +411,10 @@ class VideoWriter {
         var lengthAtOffset: Int = 0
         let status = CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: &lengthAtOffset, totalLengthOut: nil, dataPointerOut: &dataPointer)
         guard status == kCMBlockBufferNoErr, let data = dataPointer else { return nil }
+        // The pointer only covers the first contiguous segment. Scaling `length` bytes through it
+        // would write past that segment on a non-contiguous buffer, so skip gain in that case.
+        guard lengthAtOffset >= length,
+              CMBlockBufferIsRangeContiguous(blockBuffer, atOffset: 0, length: length) else { return nil }
 
         // Check format — assume 16-bit PCM (standard mic format)
         guard let formatDesc = CMSampleBufferGetFormatDescription(buffer) else { return nil }

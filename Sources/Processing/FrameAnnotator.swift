@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import ImageIO
 
 /// Draws bounding box annotations on extracted key frames to highlight interaction locations.
 /// Creates annotated copies of frame images with colored circles/boxes at click positions,
@@ -26,123 +27,60 @@ class FrameAnnotator {
     // MARK: - Annotate Frame
 
     /// Create an annotated copy of a frame image with interaction indicators.
+    /// Uses a private bitmap context, so it is safe to call off the main thread.
     /// - Parameters:
-    ///   - imageURL: URL of the original frame PNG
-    ///   - action: The aggregated action associated with this frame
+    ///   - imageURL: URL of the original frame
+    ///   - action: The aggregated action this frame shows
     ///   - stepNumber: The step number to label
-    ///   - outputDirectory: Where to save the annotated image
-    /// - Returns: URL of the annotated image, or nil if annotation failed
+    ///   - geometry: Where the recorded content was on screen (maps positions onto the frame)
+    ///   - outputURL: Where to save the annotated JPEG
+    /// - Returns: `outputURL` on success
     func annotateFrame(
         imageURL: URL,
-        action: AggregatedAction,
+        action: AggregatedAction?,
         stepNumber: Int,
-        outputDirectory: URL
+        geometry: CaptureGeometry?,
+        outputURL: URL
     ) -> URL? {
-        guard let nsImage = NSImage(contentsOf: imageURL) else {
+        guard let source = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             print("  ⚠️ Cannot load image for annotation: \(imageURL.lastPathComponent)")
             return nil
         }
+        let imageSize = CGSize(width: image.width, height: image.height)
+        let color = action.map { annotationColor(for: $0.actionType) }
+            ?? CGColor(red: 0.45, green: 0.45, blue: 0.5, alpha: 1)
 
-        guard let position = action.position else {
-            // No position data — just add step label to the image
-            return addStepLabel(
-                to: nsImage,
-                stepNumber: stepNumber,
-                action: action,
-                outputDirectory: outputDirectory,
-                originalFilename: imageURL.deletingPathExtension().lastPathComponent
-            )
+        // Position in image pixels, bottom-left origin (CoreGraphics). Nil when the interaction
+        // happened outside the captured area or the capture origin is unknown.
+        let imagePos: CGPoint? = action?.position.flatMap { global in
+            geometry?.imagePoint(forGlobal: global, imageSize: imageSize).map {
+                CGPoint(x: $0.x, y: imageSize.height - $0.y)
+            }
         }
 
-        let imageSize = nsImage.size
-
-        // Create a new image with annotations drawn on it
-        let annotated = NSImage(size: imageSize)
-        annotated.lockFocus()
-
-        // Draw original image
-        nsImage.draw(
-            in: NSRect(origin: .zero, size: imageSize),
-            from: NSRect(origin: .zero, size: imageSize),
-            operation: .copy,
-            fraction: 1.0
-        )
-
-        // Get graphics context
-        guard let context = NSGraphicsContext.current?.cgContext else {
-            annotated.unlockFocus()
-            return nil
+        let rendered = render(image) { context in
+            if let action, let imagePos {
+                switch action.actionType {
+                case .click, .doubleClick, .rightClick:
+                    drawClickIndicator(context: context, at: imagePos, color: color, isDouble: action.actionType == .doubleClick)
+                case .type, .formFill:
+                    drawTypeIndicator(context: context, at: imagePos, color: color, text: action.typedText)
+                case .drag:
+                    drawClickIndicator(context: context, at: imagePos, color: color, isDouble: false)
+                case .scroll:
+                    drawScrollIndicator(context: context, at: imagePos, color: color)
+                case .shortcut, .keyPress:
+                    drawShortcutIndicator(context: context, at: imagePos, color: color, text: action.description)
+                }
+                drawActionLabel(context: context, action: action, near: imagePos, color: color, imageSize: imageSize)
+            }
+            drawStepBadge(context: context, stepNumber: stepNumber, color: color, imageSize: imageSize)
         }
 
-        // Convert screen coordinates to image coordinates
-        // Screen coordinates have origin at top-left, image at bottom-left
-        let imagePos = convertToImageCoordinates(
-            screenPosition: position,
-            imageSize: imageSize
-        )
-
-        // Draw interaction indicator based on action type
-        let color = annotationColor(for: action.actionType)
-
-        switch action.actionType {
-        case .click, .doubleClick, .rightClick:
-            drawClickIndicator(
-                context: context,
-                at: imagePos,
-                color: color,
-                isDouble: action.actionType == .doubleClick
-            )
-
-        case .type, .formFill:
-            drawTypeIndicator(
-                context: context,
-                at: imagePos,
-                color: color,
-                text: action.typedText
-            )
-
-        case .drag:
-            // Draw start point with arrow hint
-            drawClickIndicator(context: context, at: imagePos, color: color, isDouble: false)
-
-        case .scroll:
-            drawScrollIndicator(context: context, at: imagePos, color: color)
-
-        case .shortcut, .keyPress:
-            drawShortcutIndicator(
-                context: context,
-                at: imagePos,
-                color: color,
-                text: action.description
-            )
-        }
-
-        // Draw step number badge
-        drawStepBadge(context: context, stepNumber: stepNumber, color: color, imageSize: imageSize)
-
-        // Draw action label
-        drawActionLabel(
-            context: context,
-            action: action,
-            near: imagePos,
-            color: color,
-            imageSize: imageSize
-        )
-
-        annotated.unlockFocus()
-
-        // Save annotated image
-        let outputFilename = imageURL.deletingPathExtension().lastPathComponent + "_annotated.png"
-        let outputURL = outputDirectory.appendingPathComponent(outputFilename)
-
-        guard let tiffData = annotated.tiffRepresentation,
-              let bitmapRep = NSBitmapImageRep(data: tiffData),
-              let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
-            return nil
-        }
-
+        guard let rendered else { return nil }
         do {
-            try pngData.write(to: outputURL)
+            try KeyFrameExtractor.writeJPEG(rendered, to: outputURL, quality: 0.85)
             return outputURL
         } catch {
             print("  ⚠️ Failed to save annotated frame: \(error.localizedDescription)")
@@ -150,37 +88,56 @@ class FrameAnnotator {
         }
     }
 
+    /// Draw `image` into a fresh bitmap context, run `draw`, and return the result.
+    /// Sets a thread-local NSGraphicsContext so NSString drawing lands in the same context.
+    private func render(_ image: CGImage, draw: (CGContext) -> Void) -> CGImage? {
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                data: nil,
+                width: image.width,
+                height: image.height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+              ) else { return nil }
+
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        draw(context)
+        NSGraphicsContext.restoreGraphicsState()
+        return context.makeImage()
+    }
+
     // MARK: - Batch Annotate
 
-    /// Annotate all frames for a set of workflow steps.
+    /// Annotate one frame per workflow step, using the action each step maps to.
+    /// - Returns: step number → annotated filename (each step gets its own file, even when
+    ///   two steps share a screenshot).
     func annotateAllFrames(
         steps: [WorkflowStep],
         actions: [AggregatedAction],
-        framesDirectory: URL
-    ) -> [String: String] {
-        // Map of original filename → annotated filename
-        var annotationMap: [String: String] = [:]
+        framesDirectory: URL,
+        geometry: CaptureGeometry?
+    ) -> [Int: String] {
+        var annotationMap: [Int: String] = [:]
 
         for step in steps {
             guard let screenshotFile = step.screenshotFile else { continue }
-
             let imageURL = framesDirectory.appendingPathComponent(screenshotFile)
+            let action = step.actionIndex.flatMap { index in actions.first { $0.sequenceNumber == index } }
+            let base = (screenshotFile as NSString).deletingPathExtension
+            let outputURL = framesDirectory.appendingPathComponent("\(base)_step\(step.stepNumber)_annotated.jpg")
 
-            // Find the matching aggregated action by timestamp proximity
-            let matchingAction = actions.min(by: {
-                abs($0.bestFrameTimestamp - step.timestampStart) <
-                abs($1.bestFrameTimestamp - step.timestampStart)
-            })
-
-            guard let action = matchingAction else { continue }
-
-            if let annotatedURL = annotateFrame(
+            if let annotated = annotateFrame(
                 imageURL: imageURL,
                 action: action,
                 stepNumber: step.stepNumber,
-                outputDirectory: framesDirectory
+                geometry: geometry,
+                outputURL: outputURL
             ) {
-                annotationMap[screenshotFile] = annotatedURL.lastPathComponent
+                annotationMap[step.stepNumber] = annotated.lastPathComponent
             }
         }
 
@@ -189,22 +146,6 @@ class FrameAnnotator {
     }
 
     // MARK: - Drawing Helpers
-
-    /// Convert screen coordinates to image coordinates.
-    /// Screen: origin top-left. Image (NSImage): origin bottom-left.
-    /// We also need to account for the image being potentially scaled vs. screen resolution.
-    private func convertToImageCoordinates(
-        screenPosition: CGPoint,
-        imageSize: NSSize
-    ) -> CGPoint {
-        // Assume the image represents the full screen
-        // The screen capture image dimensions should match the screen
-        // Flip Y axis: image origin is bottom-left
-        return CGPoint(
-            x: screenPosition.x,
-            y: imageSize.height - screenPosition.y
-        )
-    }
 
     /// Draw a click indicator (circle + crosshair)
     private func drawClickIndicator(
@@ -365,7 +306,7 @@ class FrameAnnotator {
         context: CGContext,
         stepNumber: Int,
         color: CGColor,
-        imageSize: NSSize
+        imageSize: CGSize
     ) {
         let badgeSize: CGFloat = 32
         let margin: CGFloat = 12
@@ -407,7 +348,7 @@ class FrameAnnotator {
         action: AggregatedAction,
         near point: CGPoint,
         color: CGColor,
-        imageSize: NSSize
+        imageSize: CGSize
     ) {
         let labelText = action.description as NSString
         let attrs: [NSAttributedString.Key: Any] = [
@@ -452,50 +393,6 @@ class FrameAnnotator {
         NSGraphicsContext.restoreGraphicsState()
 
         context.restoreGState()
-    }
-
-    /// Add just a step label (when no position data available)
-    private func addStepLabel(
-        to image: NSImage,
-        stepNumber: Int,
-        action: AggregatedAction,
-        outputDirectory: URL,
-        originalFilename: String
-    ) -> URL? {
-        let imageSize = image.size
-        let annotated = NSImage(size: imageSize)
-        annotated.lockFocus()
-
-        image.draw(
-            in: NSRect(origin: .zero, size: imageSize),
-            from: NSRect(origin: .zero, size: imageSize),
-            operation: .copy,
-            fraction: 1.0
-        )
-
-        guard let context = NSGraphicsContext.current?.cgContext else {
-            annotated.unlockFocus()
-            return nil
-        }
-
-        let color = annotationColor(for: action.actionType)
-        drawStepBadge(context: context, stepNumber: stepNumber, color: color, imageSize: imageSize)
-
-        annotated.unlockFocus()
-
-        let outputURL = outputDirectory.appendingPathComponent("\(originalFilename)_annotated.png")
-        guard let tiffData = annotated.tiffRepresentation,
-              let bitmapRep = NSBitmapImageRep(data: tiffData),
-              let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
-            return nil
-        }
-
-        do {
-            try pngData.write(to: outputURL)
-            return outputURL
-        } catch {
-            return nil
-        }
     }
 
     // MARK: - Colors

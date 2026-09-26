@@ -6,12 +6,33 @@ import Foundation
 struct AIRequest {
     let prompt: String
     let images: [Data]
+    /// Optional caption sent immediately before each image (same count as `images`),
+    /// so the model can tie every picture to what the prompt says about it.
+    let imageLabels: [String]
     let model: String?
 
-    init(prompt: String, images: [Data] = [], model: String? = nil) {
+    init(prompt: String, images: [Data] = [], imageLabels: [String] = [], model: String? = nil) {
         self.prompt = prompt
         self.images = images
+        self.imageLabels = imageLabels
         self.model = model
+    }
+
+    /// Label for image `index`, if one was provided.
+    func label(forImageAt index: Int) -> String? {
+        index < imageLabels.count ? imageLabels[index] : nil
+    }
+
+    /// MIME type sniffed from the image bytes (providers reject mislabelled data).
+    static func mimeType(for data: Data) -> String {
+        let bytes = [UInt8](data.prefix(12))
+        if bytes.starts(with: [0xFF, 0xD8, 0xFF]) { return "image/jpeg" }
+        if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return "image/png" }
+        if bytes.starts(with: [0x47, 0x49, 0x46]) { return "image/gif" }
+        if bytes.count >= 12, bytes[0...3] == [0x52, 0x49, 0x46, 0x46], bytes[8...11] == [0x57, 0x45, 0x42, 0x50] {
+            return "image/webp"
+        }
+        return "image/png"
     }
 }
 
@@ -28,15 +49,6 @@ protocol AIService {
 
     /// Human-readable name of the provider.
     var providerName: String { get }
-}
-
-/// Fallback service when no provider is configured. Always throws.
-class DummyAIService: AIService {
-    var providerName: String { "Not Configured" }
-    var isConfigured: Bool { false }
-    func complete(_ request: AIRequest) async throws -> String {
-        throw AIError.notConfigured("No AI provider configured. Add one in Settings → AI Providers.")
-    }
 }
 
 // MARK: - AI Errors

@@ -30,9 +30,10 @@ struct WorkflowStep: Codable, Identifiable {
     var timestampEnd: TimeInterval?
     var actionType: ActionType
     var uiElement: String?                // The UI element involved (e.g. "Settings button", "Search field")
-    var interactionPosition: CodablePoint? // Screen coordinates where the interaction occurred
+    var interactionPosition: CodablePoint? // Global top-left screen points where the interaction occurred
+    var actionIndex: Int? = nil           // 1-based aggregated action this step maps to (nil = none)
 
-    enum ActionType: String, Codable {
+    enum ActionType: String, Codable, CaseIterable {
         case click
         case doubleClick
         case rightClick
@@ -55,7 +56,8 @@ struct WorkflowStep: Codable, Identifiable {
         timestampEnd: TimeInterval? = nil,
         actionType: ActionType = .click,
         uiElement: String? = nil,
-        interactionPosition: CodablePoint? = nil
+        interactionPosition: CodablePoint? = nil,
+        actionIndex: Int? = nil
     ) {
         self.id = UUID()
         self.stepNumber = stepNumber
@@ -68,6 +70,7 @@ struct WorkflowStep: Codable, Identifiable {
         self.actionType = actionType
         self.uiElement = uiElement
         self.interactionPosition = interactionPosition
+        self.actionIndex = actionIndex
     }
 }
 

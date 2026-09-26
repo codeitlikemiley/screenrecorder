@@ -1,10 +1,22 @@
 import Foundation
 import AppKit
+import ImageIO
 
 /// Converts a RecordingSession into structured workflow steps using an AI provider.
-/// Uses aggregated actions (from EventAggregator) for better context and deterministic frame mapping.
+///
+/// The model gets the grouped actions (numbered ACTION_n), the narration as timestamped
+/// utterances, and one screenshot per selected action, each preceded by a caption naming the
+/// action it shows. It answers in JSON; each step names the ACTION_n it covers so screenshots,
+/// timestamps and click positions are attached deterministically rather than guessed.
 class StepGenerator {
     private let aiService: AIService
+
+    /// Screenshots sent per request.
+    private let maxImages = 15
+    /// Longest edge of screenshots sent to the model.
+    private let imageMaxDimension: CGFloat = 1280
+    /// Narration characters included in the prompt.
+    private let maxNarrationCharacters = 8000
 
     init(aiService: AIService) {
         self.aiService = aiService
@@ -12,8 +24,6 @@ class StepGenerator {
 
     // MARK: - Generate Steps
 
-    /// Generate a workflow from a recording session.
-    /// Uses aggregated actions for better step quality and frame mapping.
     func generate(
         from session: RecordingSession,
         framesDirectory: URL,
@@ -24,355 +34,344 @@ class StepGenerator {
         }
 
         print("🧠 Generating workflow steps from session...")
-
-        // Use aggregated actions if available, otherwise fall back to basic prompt
         let actions = aggregatedActions ?? session.aggregatedActions ?? []
 
-        // 1. Build the prompt
-        let prompt = buildPrompt(from: session, actions: actions)
+        // 1. Pick screenshots first so the prompt only references images that are really sent.
+        let attachments = selectAttachments(actions: actions, session: session, framesDirectory: framesDirectory)
 
-        // 2. Prepare images — one per aggregated action for precise mapping
-        let imageData = loadActionFrames(
-            actions: actions,
-            session: session,
-            framesDirectory: framesDirectory,
-            maxImages: 15
-        )
+        // 2. Build the prompt
+        let prompt = buildPrompt(from: session, actions: actions, attachments: attachments)
 
         // 3. Call AI
-        let responseText = try await aiService.complete(AIRequest(prompt: prompt, images: imageData))
+        let request = AIRequest(
+            prompt: prompt,
+            images: attachments.map(\.data),
+            imageLabels: attachments.map(\.caption)
+        )
+        print("  📸 Sending \(attachments.count) screenshots to \(aiService.providerName)")
+        let responseText = try await aiService.complete(request)
 
-        // 4. Parse response into structured steps with deterministic frame assignment
+        // 4. Parse (JSON first, legacy marker format as a fallback)
         let workflow = parseResponse(responseText, session: session, actions: actions, model: aiService.providerName)
-
         print("🧠 Generated: \"\(workflow.title)\" — \(workflow.steps.count) steps")
         return workflow
     }
 
+    // MARK: - Attachments
+
+    private struct Attachment {
+        let imageNumber: Int
+        let actionIndex: Int?   // nil for the final "end" frame
+        let data: Data
+        let caption: String
+    }
+
+    private func selectAttachments(
+        actions: [AggregatedAction],
+        session: RecordingSession,
+        framesDirectory: URL
+    ) -> [Attachment] {
+        var candidates: [(actionIndex: Int?, frame: RecordingSession.FrameReference)] = []
+
+        if !actions.isEmpty {
+            for action in actions {
+                if let frame = frame(for: action, in: session.frames) {
+                    candidates.append((action.sequenceNumber, frame))
+                }
+            }
+            candidates = KeyFrameExtractor.evenlySample(candidates, count: maxImages - 1)
+            if let end = session.frames.last(where: { $0.trigger == "end" }) {
+                candidates.append((nil, end))
+            }
+        } else {
+            candidates = KeyFrameExtractor.evenlySample(session.frames, count: maxImages).map { (nil, $0) }
+        }
+
+        var attachments: [Attachment] = []
+        var usedFiles = Set<String>()
+        for candidate in candidates where !usedFiles.contains(candidate.frame.filename) {
+            let url = framesDirectory.appendingPathComponent(candidate.frame.filename)
+            guard let data = loadForUpload(url) else { continue }
+            usedFiles.insert(candidate.frame.filename)
+            let number = attachments.count + 1
+            let caption: String
+            if let index = candidate.actionIndex {
+                caption = "Image \(number): screen at ACTION_\(index) (t=\(formatTimestamp(candidate.frame.timestamp)))"
+            } else if candidate.frame.trigger == "end" {
+                caption = "Image \(number): final screen at the end of the recording"
+            } else {
+                caption = "Image \(number): screen at t=\(formatTimestamp(candidate.frame.timestamp))"
+            }
+            attachments.append(Attachment(imageNumber: number, actionIndex: candidate.actionIndex, data: data, caption: caption))
+        }
+        return attachments
+    }
+
+    /// Load an image and re-encode it as a JPEG no larger than `imageMaxDimension`.
+    private func loadForUpload(_ url: URL) -> Data? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: imageMaxDimension,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return data as Data
+    }
+
     // MARK: - Prompt Construction
 
-    private func buildPrompt(from session: RecordingSession, actions: [AggregatedAction]) -> String {
+    private func buildPrompt(from session: RecordingSession, actions: [AggregatedAction], attachments: [Attachment]) -> String {
+        let imageForAction = Dictionary(
+            attachments.compactMap { a in a.actionIndex.map { ($0, a.imageNumber) } },
+            uniquingKeysWith: { first, _ in first }
+        )
+
         var prompt = """
-        You are an expert at analyzing screen recordings and generating clear, step-by-step instructions.
-        
-        I recorded a \(formatDuration(session.duration)) screen recording. Below is the structured interaction data captured during the session.
-        
-        ## Instructions
-        
-        Analyze the aggregated actions and screenshots, then generate:
-        1. A short TITLE for this workflow (max 10 words)
-        2. A one-line SUMMARY
-        3. Numbered STEPS — one step per aggregated action (or merge/skip trivial ones)
-        4. An AI_AGENT_PROMPT that a coding AI could use to replicate the workflow
-        
+        You turn screen recordings into clear, step-by-step instructions.
+
+        The recording is \(formatDuration(session.duration)) long. Below are the user's actions (already \
+        grouped: keystrokes into typed text, repeated scrolls into one), what they said while recording, \
+        and screenshots. Each screenshot is preceded by a caption naming the action it shows.
+
         """
 
         if !actions.isEmpty {
-            prompt += """
-            ## Aggregated Actions (\(actions.count) semantic actions from \(session.eventSummary.totalEvents) raw events)
-            
-            Each action below represents a meaningful user interaction (sequential keystrokes are already grouped, scrolls merged, etc.):
-            
-            """
-
-            for (i, action) in actions.enumerated() {
-                prompt += "ACTION_\(i + 1) [\(action.actionType.rawValue)] "
-                prompt += "t=\(formatTimestamp(action.startTimestamp))"
-                if action.endTimestamp > action.startTimestamp {
-                    prompt += "→\(formatTimestamp(action.endTimestamp))"
+            prompt += "\n## Actions\n"
+            for action in actions {
+                let index = action.sequenceNumber
+                prompt += "ACTION_\(index) [\(action.actionType.rawValue)] t=\(formatTimestamp(action.startTimestamp))"
+                if action.endTimestamp > action.startTimestamp + 0.5 {
+                    prompt += "–\(formatTimestamp(action.endTimestamp))"
                 }
-                prompt += " | \(action.description)"
-
-                if let text = action.typedText, !text.isEmpty {
-                    prompt += " | typed=\"\(text)\""
+                prompt += " | \(SecretRedactor.redact(action.description))"
+                if let text = action.typedText, !text.isEmpty, action.actionType != .shortcut {
+                    prompt += " | typed=\"\(SecretRedactor.redact(text))\""
                 }
-                if let pos = action.position {
-                    prompt += " | pos=(\(Int(pos.x)),\(Int(pos.y)))"
-                }
-                if !action.relatedSpeech.isEmpty {
-                    let speech = action.relatedSpeech.map { $0.text }.joined(separator: " ")
-                    prompt += " | narration=\"\(speech)\""
-                }
-                prompt += " [image_\(i + 1)]\n"
-            }
-            prompt += "\n"
-        } else {
-            // Fallback: no aggregated actions, use event summary
-            prompt += """
-            ## Interaction Events (\(session.eventSummary.totalEvents) total)
-            - Mouse clicks: \(session.eventSummary.mouseClicks)
-            - Keystrokes: \(session.eventSummary.keystrokes)
-            - Scrolls: \(session.eventSummary.scrolls)
-            - Drags: \(session.eventSummary.drags)
-            
-            """
-        }
-
-        // Add transcript if available
-        if let transcript = session.transcript, !transcript.fullText.isEmpty {
-            prompt += """
-            
-            ## Speech Narration
-            \(transcript.fullText)
-            
-            """
-
-            if !transcript.segments.isEmpty {
-                prompt += "### Timestamped Segments\n"
-                for segment in transcript.segments.prefix(50) {
-                    prompt += "- [\(formatTimestamp(segment.startTime))] \(segment.text)\n"
+                if let image = imageForAction[index] {
+                    prompt += " | see Image \(image)"
                 }
                 prompt += "\n"
             }
-        }
-
-        // Add frame references
-        if !session.frames.isEmpty {
-            prompt += "## Key Frames Captured\n"
-            for frame in session.frames.prefix(20) {
-                prompt += "- [\(formatTimestamp(frame.timestamp))] \(frame.trigger) → \(frame.filename)\n"
-            }
-            prompt += "\n"
-        }
-
-        // Output format
-        prompt += """
-        
-        ## Output Format
-        
-        Respond in EXACTLY this format (including the markers):
-        
-        ---TITLE---
-        <workflow title>
-        ---SUMMARY---
-        <one-line summary>
-        ---STEPS---
-        1. [ACTION_TYPE] <Title> | <Detailed description> | <ui_element or "none"> | <ACTION_INDEX>
-        2. [ACTION_TYPE] <Title> | <Detailed description> | <ui_element or "none"> | <ACTION_INDEX>
-        ...
-        ---AI_AGENT_PROMPT---
-        <A well-structured prompt that a coding AI agent could use to implement or reproduce this workflow>
-        ---END---
-        
-        Valid ACTION_TYPE values: click, doubleClick, rightClick, type, drag, scroll, navigate, wait, observe, speak
-        
-        Rules:
-        - The ACTION_INDEX should reference which ACTION_# from the list above this step corresponds to (e.g., "1", "2", "3"). Use "0" if it doesn't map to a specific action.
-        - Each step should be a meaningful, user-facing action — NOT a low-level event.
-        - Use GENERIC descriptions: say "Navigate to the repository page" NOT "Navigate to https://github.com/user/repo". Say "Enter the search query" NOT "Type 'specific text'". Reference what the user is doing conceptually, not the exact values.
-        - For typing steps, mention what is being typed conceptually (e.g., "Enter the installation command"), not the literal text.
-        - Group rapid sequential actions if they accomplish one goal (e.g., "Fill in the login form" instead of separate steps for each field).
-        - If the user is narrating (speech segments are provided), incorporate their explanation into the step description.
-        - Mention specific UI elements when visible in screenshots (buttons, menus, text fields).
-        - If screenshots show code, reference specific file names and line numbers.
-        - The AI agent prompt should be detailed enough for an AI to implement the feature or fix shown.
-        """
-
-        return prompt
-    }
-
-    // MARK: - Load Action Frames
-
-    /// Load one frame per aggregated action for precise step-to-frame mapping.
-    private func loadActionFrames(
-        actions: [AggregatedAction],
-        session: RecordingSession,
-        framesDirectory: URL,
-        maxImages: Int
-    ) -> [Data] {
-        var imageData: [Data] = []
-
-        if !actions.isEmpty {
-            // Send the frame closest to each aggregated action's best timestamp
-            let actionsToSend = selectDistributedItems(actions, count: maxImages)
-
-            for action in actionsToSend {
-                let targetTs = action.bestFrameTimestamp
-                if let frame = findNearestFrame(to: targetTs, in: session.frames) {
-                    let imageURL = framesDirectory.appendingPathComponent(frame.filename)
-                    if let data = loadAndResize(imageURL) {
-                        imageData.append(data)
-                    }
-                }
-            }
         } else {
-            // Fallback: distributed frames
-            let framesToSend = selectDistributedItems(session.frames, count: maxImages)
-            for frame in framesToSend {
-                let imageURL = framesDirectory.appendingPathComponent(frame.filename)
-                if let data = loadAndResize(imageURL) {
-                    imageData.append(data)
+            prompt += """
+
+            ## Actions
+            No input events were logged; rely on the screenshots and narration.
+            Clicks: \(session.eventSummary.mouseClicks), keystrokes: \(session.eventSummary.keystrokes), \
+            scrolls: \(session.eventSummary.scrolls), drags: \(session.eventSummary.drags).
+
+            """
+        }
+
+        if let transcript = session.transcript, !transcript.fullText.isEmpty {
+            prompt += "\n## Narration (what the user said, with start times)\n"
+            var used = 0
+            for segment in transcript.segments {
+                let line = "- [\(formatTimestamp(segment.startTime))] \(SecretRedactor.redact(segment.text))\n"
+                if used + line.count > maxNarrationCharacters {
+                    prompt += "- … (narration truncated)\n"
+                    break
                 }
+                prompt += line
+                used += line.count
             }
         }
 
-        print("  📸 Sending \(imageData.count) key frames to AI")
-        return imageData
-    }
+        prompt += """
 
-    private func loadAndResize(_ url: URL) -> Data? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        if data.count > 512_000, let downsized = downsizeImage(data, maxDimension: 1024) {
-            return downsized
+        ## What to produce
+        - A short title (max 10 words) and a one-line summary.
+        - Steps a person could follow to repeat this workflow. Usually one step per meaningful action; \
+        merge rapid actions that serve one goal (e.g. "Fill in the login form") and skip noise.
+        - Use the narration to explain *why* a step is done when the user said so.
+        - Name UI elements you can see in the screenshots (button labels, menu names, fields).
+        - Don't copy secrets, passwords or personal data into steps; describe them ("Enter your API key").
+        - An ai_agent_prompt: instructions an AI agent could follow to reproduce the workflow.
+
+        ## Output
+        Reply with only this JSON object, no prose and no code fences:
+        {
+          "title": "string",
+          "summary": "string",
+          "steps": [
+            {
+              "action_type": "click | doubleClick | rightClick | type | drag | scroll | navigate | wait | observe | speak",
+              "title": "short imperative title",
+              "description": "what to do and why",
+              "ui_element": "visible UI element, or null",
+              "action_index": "number n of the ACTION_n this step covers, or null"
+            }
+          ],
+          "ai_agent_prompt": "string"
         }
-        return data
-    }
-
-    /// Select items distributed across the array
-    private func selectDistributedItems<T>(_ items: [T], count: Int) -> [T] {
-        guard items.count > count else { return items }
-        let step = items.count / count
-        return stride(from: 0, to: items.count, by: step).prefix(count).map { items[$0] }
-    }
-
-    /// Downsize a PNG to reduce API payload
-    private func downsizeImage(_ data: Data, maxDimension: CGFloat) -> Data? {
-        guard let nsImage = NSImage(data: data) else { return nil }
-        let size = nsImage.size
-        let scale = min(maxDimension / max(size.width, size.height), 1.0)
-        let newSize = NSSize(width: size.width * scale, height: size.height * scale)
-
-        let resized = NSImage(size: newSize)
-        resized.lockFocus()
-        nsImage.draw(in: NSRect(origin: .zero, size: newSize),
-                     from: NSRect(origin: .zero, size: size),
-                     operation: .copy,
-                     fraction: 1.0)
-        resized.unlockFocus()
-
-        guard let tiff = resized.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff),
-              let png = rep.representation(using: .png, properties: [.compressionFactor: 0.8]) else {
-            return nil
-        }
-
-        return png
+        """
+        return prompt
     }
 
     // MARK: - Parse Response
 
-    private func parseResponse(
-        _ text: String,
+    private struct ResponseJSON: Decodable {
+        struct Step: Decodable {
+            let action_type: String?
+            let title: String?
+            let description: String?
+            let ui_element: String?
+            let action_index: FlexibleInt?
+        }
+        let title: String?
+        let summary: String?
+        let steps: [Step]?
+        let ai_agent_prompt: String?
+    }
+
+    /// Accepts 3, "3", "ACTION_3" or null.
+    private struct FlexibleInt: Decodable {
+        let value: Int?
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let int = try? container.decode(Int.self) {
+                value = int
+            } else if let string = try? container.decode(String.self) {
+                value = Int(string.filter(\.isNumber))
+            } else {
+                value = nil
+            }
+        }
+    }
+
+    private func parseResponse(_ text: String, session: RecordingSession, actions: [AggregatedAction], model: String) -> GeneratedWorkflow {
+        if let json = decodeJSON(text) {
+            let steps = (json.steps ?? []).enumerated().map { offset, step in
+                makeStep(
+                    number: offset + 1,
+                    actionType: step.action_type,
+                    title: step.title ?? "Step \(offset + 1)",
+                    description: step.description ?? step.title ?? "",
+                    uiElement: step.ui_element,
+                    actionIndex: step.action_index?.value,
+                    session: session,
+                    actions: actions
+                )
+            }
+            return GeneratedWorkflow(
+                title: json.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Untitled Workflow",
+                summary: json.summary ?? "",
+                steps: steps,
+                aiAgentPrompt: json.ai_agent_prompt,
+                modelUsed: model
+            )
+        }
+
+        print("  ⚠️ AI reply was not valid JSON — falling back to the marker format")
+        return parseLegacyResponse(text, session: session, actions: actions, model: model)
+    }
+
+    /// Extract the outermost JSON object, tolerating code fences or stray prose around it.
+    private func decodeJSON(_ text: String) -> ResponseJSON? {
+        guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end else { return nil }
+        let data = Data(text[start...end].utf8)
+        return try? JSONDecoder().decode(ResponseJSON.self, from: data)
+    }
+
+    private func makeStep(
+        number: Int,
+        actionType: String?,
+        title: String,
+        description: String,
+        uiElement: String?,
+        actionIndex: Int?,
         session: RecordingSession,
-        actions: [AggregatedAction],
-        model: String
-    ) -> GeneratedWorkflow {
+        actions: [AggregatedAction]
+    ) -> WorkflowStep {
+        let type = actionType.flatMap { raw in
+            WorkflowStep.ActionType(rawValue: raw) ?? WorkflowStep.ActionType.allCases.first { $0.rawValue.lowercased() == raw.lowercased() }
+        } ?? .observe
+
+        var frame: RecordingSession.FrameReference?
+        var position: CodablePoint?
+        var start: TimeInterval = 0
+        var end: TimeInterval?
+        var validIndex: Int?
+
+        if let actionIndex, let action = actions.first(where: { $0.sequenceNumber == actionIndex }) {
+            validIndex = actionIndex
+            start = action.startTimestamp
+            end = action.endTimestamp > action.startTimestamp ? action.endTimestamp : nil
+            frame = self.frame(for: action, in: session.frames)
+            position = action.position.map(CodablePoint.init)
+        }
+
+        let element = uiElement?.trimmingCharacters(in: .whitespaces)
+        return WorkflowStep(
+            stepNumber: number,
+            title: title,
+            description: description,
+            screenshotFile: frame?.filename,
+            timestampStart: start,
+            timestampEnd: end,
+            actionType: type,
+            uiElement: (element?.isEmpty ?? true) || element?.lowercased() == "none" || element?.lowercased() == "null" ? nil : element,
+            interactionPosition: position,
+            actionIndex: validIndex
+        )
+    }
+
+    /// The frame captured for `action` (by index), else the nearest one in time.
+    private func frame(for action: AggregatedAction, in frames: [RecordingSession.FrameReference]) -> RecordingSession.FrameReference? {
+        if let exact = frames.first(where: { $0.actionIndex == action.sequenceNumber }) {
+            return exact
+        }
+        return frames.min { abs($0.timestamp - action.bestFrameTimestamp) < abs($1.timestamp - action.bestFrameTimestamp) }
+    }
+
+    // MARK: - Legacy marker format
+
+    private func parseLegacyResponse(_ text: String, session: RecordingSession, actions: [AggregatedAction], model: String) -> GeneratedWorkflow {
         let title = extractSection(from: text, start: "---TITLE---", end: "---SUMMARY---")?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? "Untitled Workflow"
-
         let summary = extractSection(from: text, start: "---SUMMARY---", end: "---STEPS---")?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
         let stepsText = extractSection(from: text, start: "---STEPS---", end: "---AI_AGENT_PROMPT---") ?? ""
-        let steps = parseSteps(stepsText, frames: session.frames, actions: actions)
-
         let aiPrompt = extractSection(from: text, start: "---AI_AGENT_PROMPT---", end: "---END---")?
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        return GeneratedWorkflow(
-            title: title,
-            summary: summary,
-            steps: steps,
-            aiAgentPrompt: aiPrompt,
-            modelUsed: model
-        )
+        var steps: [WorkflowStep] = []
+        for line in stepsText.components(separatedBy: "\n").map({ $0.trimmingCharacters(in: .whitespaces) }) where !line.isEmpty {
+            guard let dot = line.firstIndex(of: "."), Int(line[..<dot].trimmingCharacters(in: .whitespaces)) != nil else { continue }
+            var rest = String(line[line.index(after: dot)...]).trimmingCharacters(in: .whitespaces)
+            var type: String?
+            if rest.hasPrefix("["), let close = rest.firstIndex(of: "]") {
+                type = String(rest[rest.index(after: rest.startIndex)..<close])
+                rest = String(rest[rest.index(after: close)...]).trimmingCharacters(in: .whitespaces)
+            }
+            let parts = rest.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+            let number = steps.count + 1
+            steps.append(makeStep(
+                number: number,
+                actionType: type,
+                title: parts.first ?? "Step \(number)",
+                description: parts.count > 1 ? parts[1] : (parts.first ?? ""),
+                uiElement: parts.count > 2 ? parts[2] : nil,
+                actionIndex: parts.count > 3 ? Int(parts[3].filter(\.isNumber)) : nil,
+                session: session,
+                actions: actions
+            ))
+        }
+        return GeneratedWorkflow(title: title, summary: summary, steps: steps, aiAgentPrompt: aiPrompt, modelUsed: model)
     }
 
     private func extractSection(from text: String, start: String, end: String) -> String? {
         guard let startRange = text.range(of: start) else { return nil }
         let afterStart = text[startRange.upperBound...]
-
         if let endRange = afterStart.range(of: end) {
             return String(afterStart[..<endRange.lowerBound])
         }
         return String(afterStart)
-    }
-
-    private func parseSteps(
-        _ text: String,
-        frames: [RecordingSession.FrameReference],
-        actions: [AggregatedAction]
-    ) -> [WorkflowStep] {
-        var steps: [WorkflowStep] = []
-
-        let lines = text.components(separatedBy: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-
-        for line in lines {
-            // Match pattern: "1. [click] Title | Description | ui_element | ACTION_INDEX"
-            guard let dotIndex = line.firstIndex(of: ".") else { continue }
-            let numberStr = String(line[line.startIndex..<dotIndex]).trimmingCharacters(in: .whitespaces)
-            guard let stepNumber = Int(numberStr) else { continue }
-
-            let rest = String(line[line.index(after: dotIndex)...]).trimmingCharacters(in: .whitespaces)
-
-            // Extract action type from brackets
-            var actionType: WorkflowStep.ActionType = .click
-            var content = rest
-            if let openBracket = rest.firstIndex(of: "["),
-               let closeBracket = rest.firstIndex(of: "]"),
-               openBracket < closeBracket {
-                let typeStr = String(rest[rest.index(after: openBracket)..<closeBracket]).lowercased()
-                actionType = WorkflowStep.ActionType(rawValue: typeStr) ?? .click
-                content = String(rest[rest.index(after: closeBracket)...]).trimmingCharacters(in: .whitespaces)
-            }
-
-            // Split by pipe separator
-            let parts = content.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
-
-            let title = parts.count > 0 ? parts[0] : "Step \(stepNumber)"
-            let description = parts.count > 1 ? parts[1] : title
-            let uiElement = parts.count > 2 && parts[2].lowercased() != "none" ? parts[2] : nil
-
-            // Parse ACTION_INDEX (last field) — maps to aggregated actions
-            let actionIndexStr = parts.count > 3 ? parts[3] : "0"
-            let actionIndex = Int(actionIndexStr) ?? 0
-
-            // Determine frame and position from the matching aggregated action
-            var matchingFrame: RecordingSession.FrameReference?
-            var interactionPosition: CodablePoint?
-            var timestampStart: TimeInterval = 0
-            var timestampEnd: TimeInterval?
-
-            if actionIndex > 0 && actionIndex <= actions.count {
-                let action = actions[actionIndex - 1]
-                timestampStart = action.startTimestamp
-                timestampEnd = action.endTimestamp > action.startTimestamp ? action.endTimestamp : nil
-                matchingFrame = findNearestFrame(to: action.bestFrameTimestamp, in: frames)
-                if let pos = action.position {
-                    interactionPosition = CodablePoint(pos)
-                }
-            } else {
-                // Fallback: try to parse timestamp or use position in step list
-                if let parsedTs = Double(actionIndexStr) {
-                    timestampStart = parsedTs
-                }
-                matchingFrame = findNearestFrame(to: timestampStart, in: frames)
-            }
-
-            let step = WorkflowStep(
-                stepNumber: stepNumber,
-                title: title,
-                description: description,
-                screenshotFile: matchingFrame?.filename,
-                timestampStart: timestampStart,
-                timestampEnd: timestampEnd,
-                actionType: actionType,
-                uiElement: uiElement,
-                interactionPosition: interactionPosition
-            )
-            steps.append(step)
-        }
-
-        return steps
-    }
-
-    private func findNearestFrame(
-        to timestamp: TimeInterval,
-        in frames: [RecordingSession.FrameReference]
-    ) -> RecordingSession.FrameReference? {
-        frames.min(by: { abs($0.timestamp - timestamp) < abs($1.timestamp - timestamp) })
     }
 
     // MARK: - Formatting Helpers
@@ -380,15 +379,51 @@ class StepGenerator {
     private func formatDuration(_ seconds: TimeInterval) -> String {
         let mins = Int(seconds) / 60
         let secs = Int(seconds) % 60
-        if mins > 0 {
-            return "\(mins)m \(secs)s"
-        }
-        return "\(secs)s"
+        return mins > 0 ? "\(mins)m \(secs)s" : "\(secs)s"
     }
 
     private func formatTimestamp(_ seconds: TimeInterval) -> String {
-        let mins = Int(seconds) / 60
-        let secs = Int(seconds) % 60
-        return String(format: "%d:%02d", mins, secs)
+        String(format: "%d:%04.1f", Int(seconds) / 60, seconds.truncatingRemainder(dividingBy: 60))
+    }
+}
+
+// MARK: - Secret redaction
+
+/// Masks strings that look like credentials before they leave the machine.
+/// Raw keystrokes stay in the local metadata file; only what is sent to the AI is redacted.
+enum SecretRedactor {
+    private static let patterns: [NSRegularExpression] = [
+        #"sk-[A-Za-z0-9_\-]{16,}"#,                         // OpenAI / Anthropic style keys
+        #"(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{20,}"#, // GitHub tokens
+        #"AKIA[0-9A-Z]{16}"#,                               // AWS access key IDs
+        #"xox[abprs]-[A-Za-z0-9\-]{10,}"#,                  // Slack tokens
+        #"AIza[0-9A-Za-z_\-]{35}"#,                         // Google API keys
+        #"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"#, // JWTs
+        #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#,
+    ].compactMap { try? NSRegularExpression(pattern: $0) }
+
+    /// Long unbroken runs mixing letters and digits (random-looking tokens).
+    private static let tokenLike = try? NSRegularExpression(pattern: #"[A-Za-z0-9_\-+/=]{28,}"#)
+
+    static func redact(_ text: String) -> String {
+        var result = text
+        for pattern in patterns {
+            result = pattern.stringByReplacingMatches(
+                in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "[redacted]"
+            )
+        }
+        if let tokenLike {
+            let matches = tokenLike.matches(in: result, range: NSRange(result.startIndex..., in: result)).reversed()
+            for match in matches {
+                guard let range = Range(match.range, in: result) else { continue }
+                let candidate = result[range]
+                let hasLetter = candidate.contains(where: \.isLetter)
+                let hasDigit = candidate.contains(where: \.isNumber)
+                if (hasLetter && hasDigit && !candidate.contains("/")) || (candidate.count >= 40 && hasDigit) {
+                    result.replaceSubrange(range, with: "[redacted]")
+                }
+            }
+        }
+        return result
     }
 }

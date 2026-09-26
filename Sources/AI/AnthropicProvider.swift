@@ -36,13 +36,16 @@ class AnthropicProvider: AIService {
         // Build content blocks (Anthropic wants images before text)
         var contentBlocks: [[String: Any]] = []
 
-        for imageData in request.images {
+        for (index, imageData) in request.images.enumerated() {
+            if let label = request.label(forImageAt: index) {
+                contentBlocks.append(["type": "text", "text": label])
+            }
             let base64 = imageData.base64EncodedString()
             contentBlocks.append([
                 "type": "image",
                 "source": [
                     "type": "base64",
-                    "media_type": "image/png",
+                    "media_type": AIRequest.mimeType(for: imageData),
                     "data": base64
                 ]
             ])

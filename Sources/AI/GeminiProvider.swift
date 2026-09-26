@@ -44,11 +44,14 @@ class GeminiProvider: AIService {
             ["text": request.prompt]
         ]
 
-        for imageData in request.images {
+        for (index, imageData) in request.images.enumerated() {
+            if let label = request.label(forImageAt: index) {
+                parts.append(["text": label])
+            }
             let base64 = imageData.base64EncodedString()
             parts.append([
                 "inline_data": [
-                    "mime_type": "image/png",
+                    "mime_type": AIRequest.mimeType(for: imageData),
                     "data": base64
                 ]
             ])

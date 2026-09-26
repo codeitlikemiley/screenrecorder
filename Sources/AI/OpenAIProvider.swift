@@ -37,13 +37,17 @@ class OpenAIProvider: AIService {
             ["type": "text", "text": request.prompt]
         ]
 
-        for imageData in request.images {
+        for (index, imageData) in request.images.enumerated() {
+            if let label = request.label(forImageAt: index) {
+                contentParts.append(["type": "text", "text": label])
+            }
             let base64 = imageData.base64EncodedString()
             contentParts.append([
                 "type": "image_url",
                 "image_url": [
-                    "url": "data:image/png;base64,\(base64)",
-                    "detail": "low"
+                    "url": "data:\(AIRequest.mimeType(for: imageData));base64,\(base64)",
+                    // "low" downsamples to 512px, too small to read UI text in screenshots.
+                    "detail": "high"
                 ]
             ])
         }

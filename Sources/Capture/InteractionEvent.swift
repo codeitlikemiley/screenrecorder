@@ -27,6 +27,29 @@ enum InteractionEvent: Codable, Identifiable {
         }
     }
 
+    /// Copy with the timestamp moved by `delta` seconds (clamped at 0).
+    func shifted(by delta: TimeInterval) -> InteractionEvent {
+        switch self {
+        case .mouseClick(var e): e.timestamp = max(0, e.timestamp + delta); return .mouseClick(e)
+        case .mouseDrag(var e): e.timestamp = max(0, e.timestamp + delta); return .mouseDrag(e)
+        case .mouseScroll(var e): e.timestamp = max(0, e.timestamp + delta); return .mouseScroll(e)
+        case .keystroke(var e): e.timestamp = max(0, e.timestamp + delta); return .keystroke(e)
+        }
+    }
+
+    /// Copy with every position passed through `transform`.
+    func mappingPositions(_ transform: (CGPoint) -> CGPoint) -> InteractionEvent {
+        switch self {
+        case .mouseClick(var e): e.position = transform(e.position); return .mouseClick(e)
+        case .mouseDrag(var e):
+            e.startPosition = transform(e.startPosition)
+            e.endPosition = transform(e.endPosition)
+            return .mouseDrag(e)
+        case .mouseScroll(var e): e.position = transform(e.position); return .mouseScroll(e)
+        case .keystroke: return self
+        }
+    }
+
     /// Human-readable summary for the step generator
     var summary: String {
         switch self {
@@ -50,8 +73,8 @@ enum InteractionEvent: Codable, Identifiable {
 
 struct MouseClickEvent: Codable, Identifiable {
     let id: UUID
-    let timestamp: TimeInterval       // Seconds since recording start
-    let position: CGPoint             // Screen coordinates (pixels)
+    var timestamp: TimeInterval       // Seconds on the video timeline
+    var position: CGPoint             // Global top-left points (v2); Cocoa bottom-left in v1 files
     let button: MouseButton
     let clickCount: Int               // 1 = single, 2 = double, 3 = triple
 
@@ -66,9 +89,9 @@ struct MouseClickEvent: Codable, Identifiable {
 
 struct MouseDragEvent: Codable, Identifiable {
     let id: UUID
-    let timestamp: TimeInterval
-    let startPosition: CGPoint
-    let endPosition: CGPoint
+    var timestamp: TimeInterval
+    var startPosition: CGPoint
+    var endPosition: CGPoint
     let duration: TimeInterval        // How long the drag lasted
 
     init(timestamp: TimeInterval, startPosition: CGPoint, endPosition: CGPoint, duration: TimeInterval) {
@@ -82,8 +105,8 @@ struct MouseDragEvent: Codable, Identifiable {
 
 struct MouseScrollEvent: Codable, Identifiable {
     let id: UUID
-    let timestamp: TimeInterval
-    let position: CGPoint
+    var timestamp: TimeInterval
+    var position: CGPoint
     let deltaX: CGFloat
     let deltaY: CGFloat
 
@@ -106,7 +129,7 @@ enum MouseButton: String, Codable {
 
 struct KeystrokeLogEvent: Codable, Identifiable {
     let id: UUID
-    let timestamp: TimeInterval
+    var timestamp: TimeInterval
     let key: String                   // Display string (e.g. "A", "↩", "Space")
     let modifiers: [String]           // ["⌘", "⇧"] etc.
     let isSpecialKey: Bool

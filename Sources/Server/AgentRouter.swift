@@ -635,16 +635,22 @@ class AgentRouter {
         guard let state = appState, state.isRecording else {
             return ["ok": false, "reason": "Not recording"]
         }
-        state.isPaused = true
-        return ["ok": true]
+        if state.isPaused { return ["ok": true, "paused": true] }
+        guard coordinator?.pauseRecording() == true else {
+            return ["ok": false, "reason": "Pause is only supported for screen recordings"]
+        }
+        return ["ok": true, "paused": true]
     }
 
     private func resumeRecording() -> [String: Any] {
         guard let state = appState, state.isRecording else {
             return ["ok": false, "reason": "Not recording"]
         }
-        state.isPaused = false
-        return ["ok": true]
+        if !state.isPaused { return ["ok": true, "paused": false] }
+        guard coordinator?.resumeRecording() == true else {
+            return ["ok": false, "reason": "Could not resume"]
+        }
+        return ["ok": true, "paused": false]
     }
 
     // MARK: - Annotation Mode

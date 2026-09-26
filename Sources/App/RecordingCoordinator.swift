@@ -205,11 +205,10 @@ class RecordingCoordinator: ObservableObject {
         print("🎬 Starting recording to: \(outputURL.lastPathComponent)")
 
         do {
-            // Use actual screen pixel dimensions (must match stream config)
-            let screen = NSScreen.main ?? NSScreen.screens.first
-            let scale = Int(screen?.backingScaleFactor ?? 2)
-            let width = Int(screen?.frame.width ?? 1920) * scale
-            let height = Int(screen?.frame.height ?? 1080) * scale
+            // Size the video to the picked content (must match the stream config in startCapture)
+            let geometry = CaptureGeometry.resolve(for: filter)
+            let width = geometry.pixelWidth
+            let height = geometry.pixelHeight
 
             print("  📐 Capture resolution: \(width)x\(height)")
 
@@ -266,14 +265,20 @@ class RecordingCoordinator: ObservableObject {
             print("  ✅ Screen capture started")
 
             // Start keystroke monitor if enabled
-            if appState.isKeystrokeOverlayEnabled {
+            // AI mode needs keystrokes in the interaction log even when the on-screen
+            // keystroke overlay is off (the overlay only renders when its toggle is on).
+            if appState.isKeystrokeOverlayEnabled || appState.recordingMode == .ai {
                 startKeystrokeMonitorWithPermissionCheck()
             }
 
             // Start interaction logging only in AI mode
             if appState.recordingMode == .ai {
-                interactionLogger.startSession()
+                interactionLogger.startSession(geometry: geometry)
                 mouseMonitor.startMonitoring()
+                // Ask for speech permission now, not in the middle of post-processing.
+                if appState.isMicrophoneEnabled {
+                    Task { _ = await SpeechTranscriber.requestAuthorization() }
+                }
                 print("  📋 Interaction logging started (AI mode)")
             } else {
                 print("  ℹ️ Normal recording mode — skipping interaction logging")
@@ -357,13 +362,14 @@ class RecordingCoordinator: ObservableObject {
 
         // 6. Finalize video
         if let writer = videoWriter {
+            let videoStartHostTime = writer.firstFrameHostTime
             do {
                 let url = try await writer.stopWriting()
                 print("✅ Recording saved to: \(url.path)")
 
                 if appState.recordingMode == .ai {
-                    // 7. Flush interaction metadata as JSON sidecar
-                    let metadataURL = interactionLogger.flush(videoURL: url)
+                    // 7. Flush interaction metadata as JSON sidecar, re-based onto the video's first frame
+                    let metadataURL = interactionLogger.flush(videoURL: url, videoStartHostTime: videoStartHostTime)
 
                     // 8. Run post-recording processing pipeline (async, non-blocking)
                     let recordingDuration = appState.recordingDuration
@@ -401,6 +407,30 @@ class RecordingCoordinator: ObservableObject {
         }
 
         videoWriter = nil
+    }
+
+    // MARK: - Pause / Resume
+
+    /// Pause a screen recording: the writer drops buffers, the interaction log stops, and the
+    /// timer freezes. Resuming continues the same file with no gap.
+    @discardableResult
+    func pauseRecording() -> Bool {
+        guard appState.isRecording, !appState.isPaused, let writer = videoWriter else { return false }
+        writer.setPaused(true)
+        interactionLogger.pause()
+        appState.isPaused = true
+        appState.pauseRecordingTimer()
+        return true
+    }
+
+    @discardableResult
+    func resumeRecording() -> Bool {
+        guard appState.isRecording, appState.isPaused, let writer = videoWriter else { return false }
+        writer.setPaused(false)
+        interactionLogger.resume()
+        appState.isPaused = false
+        appState.resumeRecordingTimer()
+        return true
     }
 
     // MARK: - Toggle Recording

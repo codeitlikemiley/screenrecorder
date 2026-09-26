@@ -9,6 +9,8 @@ class ScreenCaptureManager: NSObject, ObservableObject, SCContentSharingPickerOb
     private var stream: SCStream?
     private var streamOutput: CaptureStreamOutput?
     private var contentFilter: SCContentFilter?
+    /// Geometry of the content being captured (set when capture starts).
+    private(set) var captureGeometry: CaptureGeometry?
 
     // Continuations for async picker flow
     private var pickerContinuation: CheckedContinuation<SCContentFilter, Error>?
@@ -85,13 +87,13 @@ class ScreenCaptureManager: NSObject, ObservableObject, SCContentSharingPickerOb
 
         let config = SCStreamConfiguration()
 
-        // Use actual screen pixel dimensions (accounts for Retina scale)
-        let screen = NSScreen.main ?? NSScreen.screens.first
-        let scale = Int(screen?.backingScaleFactor ?? 2)
-        let screenWidth = Int(screen?.frame.width ?? 1920) * scale
-        let screenHeight = Int(screen?.frame.height ?? 1080) * scale
-        config.width = screenWidth
-        config.height = screenHeight
+        // Size the output to exactly the picked content (display or window) at its native
+        // pixel scale, so video pixels map 1:1 onto the content. Must match the writer size.
+        let geometry = CaptureGeometry.resolve(for: captureFilter)
+        captureGeometry = geometry
+        config.width = geometry.pixelWidth
+        config.height = geometry.pixelHeight
+        config.scalesToFit = true
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(frameRate))
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.showsCursor = true
