@@ -973,7 +973,7 @@ final class MCPServer {
 
             toolDef(
                 name: "screen_recorder_click",
-                description: "Click at screen coordinates. Supports window-relative coordinates and optional background delivery to a target app/PID without stealing focus.",
+                description: "Click at screen coordinates. Use only when AX tools fail or for canvas-like content. Prefer screen_recorder_ax_press for buttons, links, menu items and tabs — it never moves the user's cursor. Always pass app or pid so the click is delivered in the background; without one the user's real cursor moves (blocked in background_safe mode).",
                 properties: [
                     "x": ["type": "number", "description": "X coordinate (screen points)"],
                     "y": ["type": "number", "description": "Y coordinate (screen points)"],
@@ -1053,7 +1053,7 @@ final class MCPServer {
             ),
             toolDef(
                 name: "screen_recorder_type_text",
-                description: "Type a string of text character by character. Works in the focused text field by default, or can deliver to a specific app/PID without focusing it.",
+                description: "Type text via simulated keystrokes. Prefer screen_recorder_ax_set_value for known text fields — it sets the text directly without keystrokes or focus changes. Pass app or pid to deliver in the background.",
                 properties: [
                     "text": ["type": "string", "description": "The text to type"],
                     "interval_ms": ["type": "integer", "description": "Delay between characters in ms (default: 50)"],
@@ -1088,7 +1088,7 @@ final class MCPServer {
             ),
             toolDef(
                 name: "screen_recorder_click_element",
-                description: "Find a text element on screen via OCR and click its center. Combines detect_elements + click. Use when you know the text label of a button/link but not its coordinates.",
+                description: "Click an element by its visible text. Tries an Accessibility press first (no cursor movement), then falls back to OCR + click. Pass window (app name) to target a background app. The response's method_used tells you which path ran.",
                 properties: [
                     "text": ["type": "string", "description": "Text to find and click (case-insensitive substring match)"],
                     "window": ["type": "string", "description": "Restrict search to a specific window by app name"],
@@ -1330,7 +1330,7 @@ final class MCPServer {
             ),
             toolDef(
                 name: "screen_recorder_ax_press",
-                description: "Press (click) a UI element found by its title/label using the Accessibility API. More reliable than coordinate-based clicking for standard UI elements.",
+                description: "PREFERRED way to click. Press a UI element by its title/label via the Accessibility API. Does not move the user's cursor or steal focus, and works on background apps — always pass app, bundle_id or pid. Use screen_recorder_ax_actionable to discover element titles.",
                 properties: [
                     "title": ["type": "string", "description": "Element title/label to press"],
                     "action": ["type": "string", "description": "AX action (default: AXPress). Others: AXOpen, AXShowMenu, AXIncrement, AXDecrement"],
@@ -1342,7 +1342,7 @@ final class MCPServer {
             ),
             toolDef(
                 name: "screen_recorder_ax_set_value",
-                description: "Set the value of a UI element (e.g., type into a text field, set a slider). Finds element by title/label.",
+                description: "PREFERRED way to enter text. Set the value of a UI element (text field, slider, etc.) by its title/label via the Accessibility API — no keystrokes, no cursor movement, no focus change. Always pass app, bundle_id or pid.",
                 properties: [
                     "title": ["type": "string", "description": "Element title/label"],
                     "value": ["type": "string", "description": "Value to set"],
@@ -1373,7 +1373,7 @@ final class MCPServer {
 
             toolDef(
                 name: "screen_recorder_lock_controls",
-                description: "IMPORTANT: Call this at the start of any automated workflow. Blocks all user mouse and keyboard input so your actions won't be interrupted. The user can still press the unlock hotkey to reclaim control at any time.",
+                description: "Blocks ALL user mouse and keyboard input until unlocked. Do NOT call this unless the user explicitly asks you to take over their machine; it only works in 'foreground' execution mode. Prefer AX tools and app/pid-scoped input so the user can keep working.",
                 properties: [
                     "unlock_key": ["type": "string", "description": "Hotkey the user presses to override the lock. Format: 'cmd+shift+f12'. Default: 'cmd+shift+f12'."],
                 ]

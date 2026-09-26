@@ -205,7 +205,7 @@ class AgentRouter {
             let count = params?["count"] as? Int ?? 20
             return ["actions": SafetyGuard.shared.recentActions(count: count)]
 
-        // Agent Control Lock — blocks user input while agent runs
+        // Agent Control Lock — blocks user input while agent runs (foreground mode only)
         case "input.lock_for_agent":
             return lockForAgent(params: params)
         case "input.unlock":
@@ -1306,6 +1306,20 @@ class AgentRouter {
         }
     }
 
+    /// Visual feedback for synthesized (CGEvent) input. Global delivery moves the real cursor,
+    /// so show a gliding virtual cursor first; PID-scoped delivery just gets the activity pill.
+    private func showInputFeedback(at point: CGPoint, targetPid: pid_t, params: [String: Any]?) {
+        let app = resolveTargetAppName(params: params)
+            ?? (targetPid != 0 ? NSRunningApplication(processIdentifier: targetPid)?.localizedName : nil)
+            ?? "screen"
+        if targetPid == 0 {
+            AgentCursorOverlay.shared.showCursorGliding(to: point)
+            AgentActivityIndicator.shared.show(message: "Agent controlling \(app) (moving your cursor)", isFallback: true)
+        } else {
+            AgentActivityIndicator.shared.show(message: "Agent controlling \(app) (background input)", isFallback: true)
+        }
+    }
+
     private func inputClick(params: [String: Any]?) throws -> [String: Any] {
         guard InputSynthesizer.checkAccessibilityPermission() else {
             return ["ok": false, "error": "Accessibility permission not granted. Open System Settings → Privacy & Security → Accessibility and add Screen Recorder."]
@@ -1324,8 +1338,9 @@ class AgentRouter {
             characteristics: characteristics
         ) { return blocked }
         maybeActivateNativeShield(params: params)
+        showInputFeedback(at: point, targetPid: targetPid, params: params)
         inputSynthesizer.click(at: point, clickCount: clickCount, targetPid: targetPid)
-        return ["ok": true, "clicked_at": ["x": point.x, "y": point.y], "click_count": clickCount, "target_pid": Int(targetPid)]
+        return ["ok": true, "clicked_at": ["x": point.x, "y": point.y], "click_count": clickCount, "target_pid": Int(targetPid), "method_used": targetPid == 0 ? "cg_event_global" : "cg_event_to_pid", "cursor_moved": targetPid == 0]
     }
 
     private func inputRightClick(params: [String: Any]?) throws -> [String: Any] {
@@ -1345,8 +1360,9 @@ class AgentRouter {
             characteristics: characteristics
         ) { return blocked }
         maybeActivateNativeShield(params: params)
+        showInputFeedback(at: point, targetPid: targetPid, params: params)
         inputSynthesizer.rightClick(at: point, targetPid: targetPid)
-        return ["ok": true, "right_clicked_at": ["x": point.x, "y": point.y], "target_pid": Int(targetPid)]
+        return ["ok": true, "right_clicked_at": ["x": point.x, "y": point.y], "target_pid": Int(targetPid), "method_used": targetPid == 0 ? "cg_event_global" : "cg_event_to_pid", "cursor_moved": targetPid == 0]
     }
 
     private func inputDoubleClick(params: [String: Any]?) throws -> [String: Any] {
@@ -1366,8 +1382,9 @@ class AgentRouter {
             characteristics: characteristics
         ) { return blocked }
         maybeActivateNativeShield(params: params)
+        showInputFeedback(at: point, targetPid: targetPid, params: params)
         inputSynthesizer.doubleClick(at: point, targetPid: targetPid)
-        return ["ok": true, "double_clicked_at": ["x": point.x, "y": point.y], "target_pid": Int(targetPid)]
+        return ["ok": true, "double_clicked_at": ["x": point.x, "y": point.y], "target_pid": Int(targetPid), "method_used": targetPid == 0 ? "cg_event_global" : "cg_event_to_pid", "cursor_moved": targetPid == 0]
     }
 
     private func inputMiddleClick(params: [String: Any]?) throws -> [String: Any] {
@@ -1387,8 +1404,9 @@ class AgentRouter {
             characteristics: characteristics
         ) { return blocked }
         maybeActivateNativeShield(params: params)
+        showInputFeedback(at: point, targetPid: targetPid, params: params)
         inputSynthesizer.middleClick(at: point, targetPid: targetPid)
-        return ["ok": true, "middle_clicked_at": ["x": point.x, "y": point.y], "target_pid": Int(targetPid)]
+        return ["ok": true, "middle_clicked_at": ["x": point.x, "y": point.y], "target_pid": Int(targetPid), "method_used": targetPid == 0 ? "cg_event_global" : "cg_event_to_pid", "cursor_moved": targetPid == 0]
     }
 
     private func inputDrag(params: [String: Any]?) throws -> [String: Any] {
@@ -1440,8 +1458,9 @@ class AgentRouter {
             characteristics: characteristics
         ) { return blocked }
         maybeActivateNativeShield(params: params)
+        showInputFeedback(at: point, targetPid: targetPid, params: params)
         inputSynthesizer.scroll(at: point, deltaX: deltaX, deltaY: deltaY, targetPid: targetPid)
-        return ["ok": true, "scrolled_at": ["x": point.x, "y": point.y], "delta_x": deltaX, "delta_y": deltaY, "target_pid": Int(targetPid)]
+        return ["ok": true, "scrolled_at": ["x": point.x, "y": point.y], "delta_x": deltaX, "delta_y": deltaY, "target_pid": Int(targetPid), "method_used": targetPid == 0 ? "cg_event_global" : "cg_event_to_pid", "cursor_moved": targetPid == 0]
     }
 
     private func inputMoveMouse(params: [String: Any]?) throws -> [String: Any] {
@@ -1547,7 +1566,40 @@ class AgentRouter {
             throw AgentError.invalidParams("Missing 'text' parameter — the element text to find and click")
         }
 
-        // Use element detection to find the text
+        // 1) AX press first: no cursor movement, works on background windows.
+        let axAppName = (params?["app"] as? String) ?? (params?["window"] as? String)
+        let axExplicit = (axAppName?.isEmpty == false) || params?["pid"] != nil
+        let axRoot: AXUIElement? = {
+            if let axAppName, !axAppName.isEmpty { return AccessibilityBridge.appElement(named: axAppName) }
+            if let pid = params?["pid"] as? Int { return AccessibilityBridge.appElement(pid: pid_t(pid)) }
+            return AccessibilityBridge.focusedApplication()
+        }()
+        // Multi-clicks (e.g. double-click to open) have no AX press equivalent; they go to the fallback.
+        if (params?["click_count"] as? Int ?? 1) <= 1,
+           let root = axRoot,
+           let found = AccessibilityBridge.findElement(in: root, withTitle: text),
+           let pressable = AccessibilityBridge.nearestElement(supporting: kAXPressAction as String, from: found) {
+            if let blocked = safetyGate(
+                action: "click element '\(text)' (AX)",
+                targetApp: resolveTargetAppName(params: params),
+                characteristics: axExplicit ? [] : [.usesFrontmostInput]
+            ) { return blocked }
+            if AccessibilityBridge.press(pressable) {
+                if let frame = AccessibilityBridge.frame(of: pressable) {
+                    AgentCursorOverlay.shared.showElementHighlight(frame: frame)
+                }
+                AgentActivityIndicator.shared.show(message: "Agent controlling \(resolveTargetAppName(params: params) ?? "app")")
+                return [
+                    "ok": true,
+                    "clicked_element": AccessibilityBridge.stringAttribute(kAXTitleAttribute as String, of: pressable) ?? text,
+                    "method_used": "ax_press",
+                    "cursor_moved": false,
+                    "focus_stolen": false,
+                ]
+            }
+        }
+
+        // 2) Fallback: OCR detection + synthesized click.
         var detectParams: [String: Any] = ["min_confidence": 0.5]
         if let window = params?["window"] as? String { detectParams["window"] = window }
         if let windowId = params?["window_id"] as? Int { detectParams["window_id"] = windowId }
@@ -1603,6 +1655,7 @@ class AgentRouter {
             characteristics: characteristics
         ) { return blocked }
         maybeActivateNativeShield(params: params)
+        showInputFeedback(at: CGPoint(x: cx, y: cy), targetPid: targetPid, params: params)
         inputSynthesizer.click(at: CGPoint(x: cx, y: cy), clickCount: clickCount, targetPid: targetPid)
 
         return [
@@ -1612,6 +1665,9 @@ class AgentRouter {
             "click_count": clickCount,
             "confidence": match["confidence"] ?? 0,
             "target_pid": Int(targetPid),
+            "method_used": targetPid == 0 ? "cg_event_global" : "cg_event_to_pid",
+            "cursor_moved": targetPid == 0,
+            "focus_stolen": targetPid == 0,
         ]
     }
 
@@ -1643,37 +1699,52 @@ class AgentRouter {
             return ["ok": false, "error": "Could not resolve target application"]
         }
 
-        // Search for a text field with matching label/placeholder/title
-        let textFields = AccessibilityBridge.findElements(in: root, role: "AXTextField", maxResults: 30)
-            + AccessibilityBridge.findElements(in: root, role: "AXTextArea", maxResults: 10)
-            + AccessibilityBridge.findElements(in: root, role: "AXComboBox", maxResults: 10)
         let hint = fieldHint.lowercased()
-        let match = textFields.first(where: { el in
-            let title = AccessibilityBridge.stringAttribute(kAXTitleAttribute as String, of: el)?.lowercased() ?? ""
-            let desc  = AccessibilityBridge.stringAttribute(kAXDescriptionAttribute as String, of: el)?.lowercased() ?? ""
-            let ph    = AccessibilityBridge.stringAttribute(kAXPlaceholderValueAttribute as String, of: el)?.lowercased() ?? ""
-            let label = AccessibilityBridge.stringAttribute(kAXLabelValueAttribute as String, of: el)?.lowercased() ?? ""
-            return title.contains(hint) || desc.contains(hint) || ph.contains(hint) || label.contains(hint)
-        })
+        let match = findTextField(in: root, hint: fieldHint)
 
         if let el = match {
+            // 1) Pure AX: set the value directly. No cursor movement, no keystrokes.
+            let axCharacteristics: Set<SafetyGuard.ActionCharacteristic> = hasExplicitAXTarget(params: params) ? [] : [.usesFrontmostInput]
+            if let blocked = safetyGate(
+                action: "type to field '\(fieldHint)' (AX): \"\(text.prefix(50))\"",
+                targetApp: resolveTargetAppName(params: params),
+                characteristics: axCharacteristics
+            ) { return blocked }
+            if AccessibilityBridge.setValue(text, on: el) {
+                if let frame = AccessibilityBridge.frame(of: el) {
+                    AgentCursorOverlay.shared.showElementHighlight(frame: frame)
+                }
+                AgentActivityIndicator.shared.show(message: "Agent controlling \(resolveTargetAppName(params: params) ?? "app")")
+                return [
+                    "ok": true, "typed": text, "field": fieldHint,
+                    "method": "ax_set_value", "method_used": "ax_set_value",
+                    "cursor_moved": false, "focus_stolen": false,
+                    "target_pid": Int(targetPid),
+                ]
+            }
+
+            // 2) Field rejected AXValue writes (some web/custom fields): focus via AX, then synthesize keys.
             if let blocked = safetyGate(
                 action: "type to field '\(fieldHint)': \"\(text.prefix(50))\"",
                 targetApp: resolveTargetAppName(params: params),
                 characteristics: characteristics
             ) { return blocked }
             maybeActivateNativeShield(params: params)
-            // Focus via AX first
             AccessibilityBridge.setFocus(on: el)
-            // Give focus a moment to settle
             try await Task.sleep(nanoseconds: 150_000_000)
-            // Also click its center to ensure cursor is in field
             if let center = AccessibilityBridge.center(of: el) {
+                showInputFeedback(at: center, targetPid: targetPid, params: params)
                 inputSynthesizer.click(at: center, targetPid: targetPid)
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
             inputSynthesizer.typeText(text, intervalMs: intervalMs, targetPid: targetPid)
-            return ["ok": true, "typed": text, "field": fieldHint, "method": "ax", "target_pid": Int(targetPid)]
+            let method = targetPid == 0 ? "cg_event_global" : "cg_event_to_pid"
+            return [
+                "ok": true, "typed": text, "field": fieldHint,
+                "method": method, "method_used": method,
+                "cursor_moved": targetPid == 0, "focus_stolen": targetPid == 0,
+                "target_pid": Int(targetPid),
+            ]
         }
 
         // Fallback: OCR detect + click + type
@@ -1689,26 +1760,334 @@ class AgentRouter {
                 characteristics: characteristics
             ) { return blocked }
             maybeActivateNativeShield(params: params)
+            showInputFeedback(at: CGPoint(x: cx, y: cy), targetPid: targetPid, params: params)
             inputSynthesizer.click(at: CGPoint(x: cx, y: cy), targetPid: targetPid)
             try await Task.sleep(nanoseconds: 150_000_000)
             inputSynthesizer.typeText(text, intervalMs: intervalMs, targetPid: targetPid)
-            return ["ok": true, "typed": text, "field": fieldHint, "method": "ocr_fallback", "target_pid": Int(targetPid)]
+            return [
+                "ok": true, "typed": text, "field": fieldHint,
+                "method": "ocr_fallback", "method_used": "ocr_fallback",
+                "cursor_moved": targetPid == 0, "focus_stolen": targetPid == 0,
+                "target_pid": Int(targetPid),
+            ]
         }
 
         return ["ok": false, "error": "Field '\(fieldHint)' not found via AX or OCR. Use 'sr input click <x> <y>' with coordinates from 'sr detect --json'."]
     }
 
+    /// Find a text input (field, area, combo box) whose title/description/placeholder/label contains `hint`.
+    private func findTextField(in root: AXUIElement, hint: String) -> AXUIElement? {
+        let textFields = AccessibilityBridge.findElements(in: root, role: "AXTextField", maxResults: 30)
+            + AccessibilityBridge.findElements(in: root, role: "AXTextArea", maxResults: 10)
+            + AccessibilityBridge.findElements(in: root, role: "AXComboBox", maxResults: 10)
+        let hint = hint.lowercased()
+        return textFields.first(where: { el in
+            let title = AccessibilityBridge.stringAttribute(kAXTitleAttribute as String, of: el)?.lowercased() ?? ""
+            let desc  = AccessibilityBridge.stringAttribute(kAXDescriptionAttribute as String, of: el)?.lowercased() ?? ""
+            let ph    = AccessibilityBridge.stringAttribute(kAXPlaceholderValueAttribute as String, of: el)?.lowercased() ?? ""
+            let label = AccessibilityBridge.stringAttribute(kAXLabelValueAttribute as String, of: el)?.lowercased() ?? ""
+            return title.contains(hint) || desc.contains(hint) || ph.contains(hint) || label.contains(hint)
+        })
+    }
+
+    // MARK: - input.ax_* (non-intrusive: never moves the cursor or injects keystrokes)
+
+    /// Resolved target for an AX input method.
+    private struct AXTarget {
+        let root: AXUIElement
+        let element: AXUIElement
+        let appName: String?
+    }
+
+    /// Resolve the app root and the element named by `title` (or the app's focused
+    /// element when `title` is omitted and `allowFocused` is true). Runs the safety gate.
+    /// Returns either a target or an error result.
+    private func resolveAXInputTarget(
+        params: [String: Any]?,
+        actionDescription: String,
+        allowFocused: Bool = false,
+        defaultRole: String? = nil,
+        preferTextField: Bool = false
+    ) -> (target: AXTarget?, error: [String: Any]?) {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return (nil, ["ok": false, "error": "Accessibility permission not granted"])
+        }
+        let explicitTarget = hasExplicitAXTarget(params: params)
+        // AX actions never move the cursor. Only an implicit "frontmost app" target counts as frontmost input.
+        let characteristics: Set<SafetyGuard.ActionCharacteristic> = explicitTarget ? [] : [.usesFrontmostInput]
+        if let blocked = safetyGate(
+            action: actionDescription,
+            targetApp: resolveTargetAppName(params: params),
+            characteristics: characteristics
+        ) { return (nil, blocked) }
+
+        guard let root = resolveAXRoot(params: params) else {
+            return (nil, ["ok": false, "error": "Could not find the target application"])
+        }
+
+        let element: AXUIElement?
+        if let title = params?["title"] as? String, !title.isEmpty {
+            element = (preferTextField ? findTextField(in: root, hint: title) : nil)
+                ?? AccessibilityBridge.findElement(in: root, withTitle: title, maxDepth: params?["max_depth"] as? Int ?? 15)
+        } else if let defaultRole {
+            element = AccessibilityBridge.findElements(in: root, role: defaultRole, maxResults: 1).first
+        } else if allowFocused {
+            element = AccessibilityBridge.focusedElement(of: root)
+        } else {
+            return (nil, ["ok": false, "error": "Missing 'title' parameter — the element's title, label, or description"])
+        }
+
+        guard let element else {
+            let what = (params?["title"] as? String).map { "Element '\($0)'" } ?? "Focused element"
+            return (nil, [
+                "ok": false,
+                "error": "\(what) not found via Accessibility API",
+                "suggestion": "Use screen_recorder_ax_actionable or screen_recorder_ax_find to list elements, or fall back to coordinate input.",
+                "method_used": "none",
+            ])
+        }
+        return (AXTarget(root: root, element: element, appName: resolveTargetAppName(params: params)), nil)
+    }
+
+    /// Standard response + visual feedback for a successful/failed AX action.
+    private func axInputResult(
+        ok: Bool,
+        method: String,
+        target: AXTarget,
+        extra: [String: Any] = [:]
+    ) -> [String: Any] {
+        if ok {
+            if let frame = AccessibilityBridge.frame(of: target.element) {
+                AgentCursorOverlay.shared.showElementHighlight(frame: frame)
+            }
+            AgentActivityIndicator.shared.show(message: "Agent controlling \(target.appName ?? "app")")
+        }
+        var result: [String: Any] = [
+            "ok": ok,
+            "method_used": method,
+            "cursor_moved": false,
+            "focus_stolen": false,
+            "element": AccessibilityBridge.serialize(target.element),
+        ]
+        if !ok {
+            result["error"] = "Accessibility action failed (element may not support it). Available actions: \(AccessibilityBridge.actionNames(of: target.element).joined(separator: ", "))"
+        }
+        result.merge(extra) { _, new in new }
+        return result
+    }
+
+    private func inputAxClick(params: [String: Any]?) async throws -> [String: Any] {
+        let title = params?["title"] as? String ?? ""
+        let (target, error) = resolveAXInputTarget(params: params, actionDescription: "AX click '\(title)'")
+        guard let target else { return error! }
+
+        // Prefer AXPress on the element or its nearest pressable ancestor; then other "activate"-like actions.
+        for action in [kAXPressAction as String, kAXConfirmAction as String, kAXPickAction as String, "AXOpen"] {
+            if let el = AccessibilityBridge.nearestElement(supporting: action, from: target.element),
+               AccessibilityBridge.performAction(action, on: el) {
+                let pressed = AXTarget(root: target.root, element: el, appName: target.appName)
+                return axInputResult(ok: true, method: "ax_press", target: pressed, extra: ["action": action])
+            }
+        }
+        return axInputResult(ok: false, method: "ax_press", target: target)
+    }
+
+    private func inputAxType(params: [String: Any]?) async throws -> [String: Any] {
+        guard let text = params?["text"] as? String else {
+            throw AgentError.invalidParams("Missing 'text' parameter")
+        }
+        let title = params?["title"] as? String
+        let (target, error) = resolveAXInputTarget(
+            params: params,
+            actionDescription: "AX type into '\(title ?? "focused element")': \"\(text.prefix(50))\"",
+            allowFocused: true,
+            preferTextField: true
+        )
+        guard let target else { return error! }
+
+        var value = text
+        if params?["append"] as? Bool ?? false {
+            value = (AccessibilityBridge.stringAttribute(kAXValueAttribute as String, of: target.element) ?? "") + text
+        }
+        let ok = AccessibilityBridge.setValue(value, on: target.element)
+        return axInputResult(ok: ok, method: "ax_set_value", target: target, extra: ["typed": text])
+    }
+
+    private func inputAxFocus(params: [String: Any]?) async throws -> [String: Any] {
+        let title = params?["title"] as? String ?? ""
+        let (target, error) = resolveAXInputTarget(params: params, actionDescription: "AX focus '\(title)'")
+        guard let target else { return error! }
+        // Sets focus *within* the target app; does not activate the app or raise its window.
+        let ok = AccessibilityBridge.setFocus(on: target.element)
+        return axInputResult(ok: ok, method: "ax_set_focus", target: target)
+    }
+
+    private func inputAxScroll(params: [String: Any]?) async throws -> [String: Any] {
+        let direction = (params?["direction"] as? String ?? "down").lowercased()
+        let pages = max(1, params?["pages"] as? Int ?? 1)
+        guard ["up", "down", "left", "right"].contains(direction) else {
+            throw AgentError.invalidParams("'direction' must be up, down, left, or right")
+        }
+
+        let title = params?["title"] as? String
+        // Without a title, default to the app's first scroll area.
+        let (target, error) = resolveAXInputTarget(
+            params: params,
+            actionDescription: "AX scroll \(direction) '\(title ?? "first scroll area")'",
+            defaultRole: "AXScrollArea"
+        )
+        guard let target else { return error! }
+
+        // Climb to the enclosing scroll area if the match is inside one.
+        var area: AXUIElement = target.element
+        var probe: AXUIElement? = target.element
+        for _ in 0..<6 {
+            guard let el = probe else { break }
+            if AccessibilityBridge.stringAttribute(kAXRoleAttribute as String, of: el) == "AXScrollArea" { area = el; break }
+            probe = AccessibilityBridge.parent(of: el)
+        }
+        let scrollTarget = AXTarget(root: target.root, element: area, appName: target.appName)
+
+        // 1) Page-scroll actions (supported by many AppKit scroll areas).
+        let pageAction = "AXScroll\(direction.capitalized)ByPage"
+        if AccessibilityBridge.actionNames(of: area).contains(pageAction) {
+            var ok = true
+            for _ in 0..<pages { ok = AccessibilityBridge.performAction(pageAction, on: area) && ok }
+            return axInputResult(ok: ok, method: "ax_scroll_action", target: scrollTarget, extra: ["direction": direction, "pages": pages])
+        }
+
+        // 2) Move the scroll bar's value (0.0 top/left ... 1.0 bottom/right).
+        let vertical = direction == "up" || direction == "down"
+        let barAttr = vertical ? kAXVerticalScrollBarAttribute : kAXHorizontalScrollBarAttribute
+        if let bar = AccessibilityBridge.elementAttribute(barAttr as String, of: area) {
+            var current: AnyObject?
+            AXUIElementCopyAttributeValue(bar, kAXValueAttribute as CFString, &current)
+            let now = (current as? NSNumber)?.doubleValue ?? 0
+            let step = (params?["amount"] as? Double ?? 0.25) * Double(pages)
+            let sign: Double = (direction == "down" || direction == "right") ? 1 : -1
+            let next = min(1, max(0, now + sign * step))
+            let ok = AccessibilityBridge.setValue(NSNumber(value: next), on: bar)
+            return axInputResult(ok: ok, method: "ax_scrollbar_value", target: scrollTarget, extra: ["direction": direction, "position": next])
+        }
+
+        return axInputResult(ok: false, method: "ax_scroll_action", target: scrollTarget, extra: [
+            "suggestion": "This element exposes no AX scrolling. Use screen_recorder_scroll with a pid/app for scoped delivery.",
+        ])
+    }
+
+    private func inputAxPick(params: [String: Any]?) async throws -> [String: Any] {
+        guard let option = params?["option"] as? String else {
+            throw AgentError.invalidParams("Missing 'option' parameter — the menu/list item to choose")
+        }
+        let title = params?["title"] as? String ?? ""
+        let (target, error) = resolveAXInputTarget(params: params, actionDescription: "AX pick '\(option)' in '\(title)'")
+        guard let target else { return error! }
+
+        // Combo boxes accept a value directly.
+        if AccessibilityBridge.stringAttribute(kAXRoleAttribute as String, of: target.element) == "AXComboBox",
+           AccessibilityBridge.setValue(option, on: target.element) {
+            return axInputResult(ok: true, method: "ax_set_value", target: target, extra: ["picked": option])
+        }
+
+        // Pop-up buttons / menus: open, then press the matching menu item.
+        let opener = AccessibilityBridge.nearestElement(supporting: kAXShowMenuAction as String, from: target.element)
+            ?? AccessibilityBridge.nearestElement(supporting: kAXPressAction as String, from: target.element)
+        guard let opener else {
+            return axInputResult(ok: false, method: "ax_pick", target: target)
+        }
+        let openAction = AccessibilityBridge.actionNames(of: opener).contains(kAXShowMenuAction as String)
+            ? kAXShowMenuAction as String : kAXPressAction as String
+        AccessibilityBridge.performAction(openAction, on: opener)
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let searchRoots = [opener, target.root]
+        for root in searchRoots {
+            let items = AccessibilityBridge.findElements(in: root, role: "AXMenuItem", maxDepth: 12, maxResults: 200)
+            if let item = items.first(where: {
+                (AccessibilityBridge.stringAttribute(kAXTitleAttribute as String, of: $0) ?? "")
+                    .localizedCaseInsensitiveContains(option)
+            }), AccessibilityBridge.press(item) {
+                return axInputResult(ok: true, method: "ax_pick", target: target, extra: ["picked": option])
+            }
+        }
+        // Close the menu we opened so we don't leave UI hanging.
+        AccessibilityBridge.performAction(kAXCancelAction as String, on: opener)
+        var result = axInputResult(ok: false, method: "ax_pick", target: target)
+        result["error"] = "Option '\(option)' not found in menu"
+        return result
+    }
+
+    private func inputAxToggle(params: [String: Any]?) async throws -> [String: Any] {
+        let title = params?["title"] as? String ?? ""
+        let (target, error) = resolveAXInputTarget(params: params, actionDescription: "AX toggle '\(title)'")
+        guard let target else { return error! }
+        guard let control = AccessibilityBridge.nearestElement(supporting: kAXPressAction as String, from: target.element) else {
+            return axInputResult(ok: false, method: "ax_press", target: target)
+        }
+        let pressedTarget = AXTarget(root: target.root, element: control, appName: target.appName)
+        let before = AccessibilityBridge.intAttribute(kAXValueAttribute as String, of: control)
+
+        // If a desired state is given and already matches, do nothing.
+        if let desired = params?["checked"] as? Bool, let before, (before != 0) == desired {
+            return axInputResult(ok: true, method: "none", target: pressedTarget, extra: ["checked": desired, "changed": false])
+        }
+        let ok = AccessibilityBridge.press(control)
+        let after = AccessibilityBridge.intAttribute(kAXValueAttribute as String, of: control)
+        var extra: [String: Any] = ["changed": ok]
+        if let after { extra["checked"] = after != 0 }
+        return axInputResult(ok: ok, method: "ax_press", target: pressedTarget, extra: extra)
+    }
+
+    private func inputAxIncrement(params: [String: Any]?) async throws -> [String: Any] {
+        try axStep(params: params, action: kAXIncrementAction as String)
+    }
+
+    private func inputAxDecrement(params: [String: Any]?) async throws -> [String: Any] {
+        try axStep(params: params, action: kAXDecrementAction as String)
+    }
+
+    private func axStep(params: [String: Any]?, action: String) throws -> [String: Any] {
+        let count = max(1, params?["count"] as? Int ?? 1)
+        let title = params?["title"] as? String ?? ""
+        let (target, error) = resolveAXInputTarget(params: params, actionDescription: "AX \(action) ×\(count) '\(title)'")
+        guard let target else { return error! }
+        guard let el = AccessibilityBridge.nearestElement(supporting: action, from: target.element) else {
+            return axInputResult(ok: false, method: "ax_action", target: target)
+        }
+        var ok = true
+        for _ in 0..<count { ok = AccessibilityBridge.performAction(action, on: el) && ok }
+        return axInputResult(
+            ok: ok,
+            method: "ax_action",
+            target: AXTarget(root: target.root, element: el, appName: target.appName),
+            extra: ["action": action, "count": count]
+        )
+    }
+
+    private func axElementAtPoint(params: [String: Any]?) throws -> [String: Any] {
+        guard InputSynthesizer.checkAccessibilityPermission() else {
+            return ["ok": false, "error": "Accessibility permission not granted"]
+        }
+        guard let x = params?["x"] as? Double, let y = params?["y"] as? Double else {
+            throw AgentError.invalidParams("Missing 'x' and 'y' coordinates")
+        }
+        let point = resolvePoint(x: x, y: y, offset: resolveWindowOffset(params: params))
+        guard let element = AccessibilityBridge.element(at: point) else {
+            return ["ok": false, "error": "No accessibility element at (\(point.x), \(point.y))"]
+        }
+        var pid: pid_t = 0
+        AXUIElementGetPid(element, &pid)
+        return [
+            "ok": true,
+            "point": ["x": Double(point.x), "y": Double(point.y)],
+            "pid": Int(pid),
+            "app": NSRunningApplication(processIdentifier: pid)?.localizedName ?? "",
+            "element": AccessibilityBridge.serialize(element),
+        ]
+    }
+
     // MARK: - App Control
 
-    private func inputAxClick(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
-    private func inputAxType(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
-    private func inputAxFocus(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
-    private func inputAxScroll(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
-    private func inputAxPick(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
-    private func inputAxToggle(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
-    private func inputAxIncrement(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
-    private func inputAxDecrement(params: [String: Any]?) async throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
-    private func axElementAtPoint(params: [String: Any]?) throws -> [String: Any] { return ["ok": false, "error": "Not implemented yet"] }
 
     private func launchApp(params: [String: Any]?) throws -> [String: Any] {
         guard let name = params?["name"] as? String else {
@@ -2112,6 +2491,15 @@ class AgentRouter {
     // MARK: - Agent Control Lock
 
     private func lockForAgent(params: [String: Any]?) -> [String: Any] {
+        // The lock swallows ALL user mouse/keyboard input. Only allow it when the user has
+        // explicitly opted into foreground (take-over) mode.
+        guard SafetyGuard.shared.executionMode == .foreground else {
+            return [
+                "ok": false,
+                "locked": false,
+                "error": "Control lock is only available in 'foreground' execution mode (current: '\(SafetyGuard.shared.executionMode.rawValue)'). Use AX tools (screen_recorder_ax_press / screen_recorder_ax_set_value) or pid/app-scoped input so the user can keep working.",
+            ]
+        }
         let unlockKey = params?["unlock_key"] as? String
         AgentControlLock.shared.lock(unlockKey: unlockKey)
         return AgentControlLock.shared.status()

@@ -19,8 +19,10 @@ class AgentActivityIndicator {
             
             let hostingView = NSHostingView(rootView: IndicatorView(message: message, isFallback: isFallback))
             self.window?.contentView = hostingView
-            
-            self.window?.makeKeyAndOrderFront(nil)
+            self.positionWindow()
+            self.window?.alphaValue = 1.0
+            // orderFrontRegardless: never take key status away from the user's app.
+            self.window?.orderFrontRegardless()
             
             let workItem = DispatchWorkItem { [weak self] in
                 self?.hide()
@@ -32,7 +34,7 @@ class AgentActivityIndicator {
     
     private func setupWindow() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 300, height: 40),
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 40),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -41,15 +43,16 @@ class AgentActivityIndicator {
         window.backgroundColor = .clear
         window.level = .floating
         window.ignoresMouseEvents = true
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        
-        if let screen = NSScreen.main {
-            let x = screen.frame.maxX - 320
-            let y = screen.frame.minY + 20
-            window.setFrameOrigin(NSPoint(x: x, y: y))
-        }
-        
+        window.hasShadow = false
+        window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         self.window = window
+    }
+
+    private func positionWindow() {
+        guard let window, let screen = NSScreen.main else { return }
+        let frame = screen.visibleFrame
+        window.setFrameOrigin(NSPoint(x: frame.maxX - window.frame.width - 20, y: frame.minY + 20))
     }
     
     private func hide() {

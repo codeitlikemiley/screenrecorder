@@ -141,6 +141,46 @@ class AccessibilityBridge {
         return children
     }
 
+    /// Get an element-valued attribute (e.g. kAXParentAttribute, kAXVerticalScrollBarAttribute).
+    static func elementAttribute(_ attribute: String, of element: AXUIElement) -> AXUIElement? {
+        var value: AnyObject?
+        let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard result == .success, let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return (value as! AXUIElement)
+    }
+
+    /// Get the parent of an element.
+    static func parent(of element: AXUIElement) -> AXUIElement? {
+        elementAttribute(kAXParentAttribute as String, of: element)
+    }
+
+    /// Get the focused element inside a specific app (unlike `focusedElement()`, which
+    /// only looks at the frontmost app). Works for background apps.
+    static func focusedElement(of appElement: AXUIElement) -> AXUIElement? {
+        elementAttribute(kAXFocusedUIElementAttribute as String, of: appElement)
+    }
+
+    /// Hit-test the element at a global screen point (top-left origin).
+    static func element(at point: CGPoint) -> AXUIElement? {
+        var element: AXUIElement?
+        let result = AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &element)
+        guard result == .success else { return nil }
+        return element
+    }
+
+    /// Return `element` if it supports `action`, otherwise the nearest ancestor that does.
+    /// Title search often lands on an AXStaticText inside a button; this climbs to the button.
+    static func nearestElement(supporting action: String, from element: AXUIElement, maxLevels: Int = 4) -> AXUIElement? {
+        var current: AXUIElement? = element
+        var level = 0
+        while let el = current, level <= maxLevels {
+            if actionNames(of: el).contains(action) { return el }
+            current = parent(of: el)
+            level += 1
+        }
+        return nil
+    }
+
     /// Get the window elements of an app.
     static func windows(of appElement: AXUIElement) -> [AXUIElement] {
         var value: AnyObject?

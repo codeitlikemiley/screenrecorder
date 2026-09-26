@@ -195,7 +195,7 @@ final class AgentControlLock {
     /// CGEventTap callback. Called for every intercepted event.
     /// Returns nil to swallow the event, or the event unchanged to pass it through.
     private static let tapCallback: CGEventTapCallBack = { proxy, type, event, userInfo in
-        guard let userInfo else { return Unmanaged.passRetained(event) }
+        guard let userInfo else { return Unmanaged.passUnretained(event) }
         let lock = Unmanaged<AgentControlLock>.fromOpaque(userInfo).takeUnretainedValue()
         return lock.handleEvent(proxy: proxy, type: type, event: event)
     }
@@ -209,7 +209,7 @@ final class AgentControlLock {
             if let tap {
                 CGEvent.tapEnable(tap: tap, enable: true)
             }
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
         }
 
         // Always check for the unlock combo before deciding to swallow
