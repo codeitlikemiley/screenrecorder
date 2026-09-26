@@ -1,14 +1,32 @@
 import Foundation
 import Network
+import Security
 
 /// Lightweight JSON-RPC 2.0 server over HTTP using Network.framework.
 /// Listens on localhost only — no external access.
 /// Zero external dependencies — uses only built-in macOS frameworks.
+///
+/// Security model: loopback alone is not enough, because any web page in the user's
+/// browser can POST to localhost. Every JSON-RPC request must therefore carry the
+/// per-launch secret from `~/.screenrecorder/agent-token` (readable only by this user)
+/// in the `X-SR-Token` header. Requests carrying an `Origin` header (i.e. from a browser)
+/// or a non-loopback `Host` header (DNS rebinding) are rejected outright.
 @MainActor
 class AgentServer {
     private var listener: NWListener?
     private let port: UInt16
     private var handler: AgentRouter?
+    private var token: String = ""
+
+    /// Header clients (`sr`, `sr-mcp`) use to send the token.
+    static let tokenHeader = "x-sr-token"
+
+    /// Where the per-launch token is written. Must match the path used by `sr` and `sr-mcp`.
+    static var tokenFileURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".screenrecorder", isDirectory: true)
+            .appendingPathComponent("agent-token")
+    }
 
     var isRunning: Bool { listener != nil }
 
@@ -21,6 +39,14 @@ class AgentServer {
     func start(router: AgentRouter) {
         guard listener == nil else { return }
         self.handler = router
+
+        do {
+            try installToken()
+        } catch {
+            // Without a token file no client could authenticate — refuse to run an open server.
+            print("🤖 Agent server not started: could not write token file: \(error)")
+            return
+        }
 
         do {
             let params = NWParameters.tcp
@@ -62,7 +88,64 @@ class AgentServer {
         listener?.cancel()
         listener = nil
         handler = nil
+        try? FileManager.default.removeItem(at: Self.tokenFileURL)
         print("🤖 Agent server stopped")
+    }
+
+    // MARK: - Token
+
+    /// Generate a fresh random token and write it to `tokenFileURL` with 0600 permissions.
+    private func installToken() throws {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            throw NSError(domain: "AgentServer", code: 1, userInfo: [NSLocalizedDescriptionKey: "SecRandomCopyBytes failed"])
+        }
+        let newToken = bytes.map { String(format: "%02x", $0) }.joined()
+
+        let fm = FileManager.default
+        let url = Self.tokenFileURL
+        let dir = url.deletingLastPathComponent()
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+        try? fm.removeItem(at: url)
+        guard fm.createFile(atPath: url.path, contents: Data(newToken.utf8), attributes: [.posixPermissions: 0o600]) else {
+            throw NSError(domain: "AgentServer", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not create \(url.path)"])
+        }
+        token = newToken
+    }
+
+    /// Constant-time comparison so the token can't be recovered by timing.
+    private func tokenMatches(_ candidate: String?) -> Bool {
+        guard let candidate, !token.isEmpty else { return false }
+        let a = Array(candidate.utf8), b = Array(token.utf8)
+        guard a.count == b.count else { return false }
+        var diff: UInt8 = 0
+        for i in 0..<a.count { diff |= a[i] ^ b[i] }
+        return diff == 0
+    }
+
+    /// Parse header lines into a lowercased-name dictionary.
+    private func parseHeaders(_ headerPart: Substring) -> [String: String] {
+        var headers: [String: String] = [:]
+        for line in headerPart.split(separator: "\r\n").dropFirst() {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            let name = line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
+            let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            headers[name] = value
+        }
+        return headers
+    }
+
+    /// Only loopback host names are accepted (defeats DNS-rebinding attacks).
+    private func isLoopbackHost(_ host: String?) -> Bool {
+        guard let host, !host.isEmpty else { return true } // HTTP/1.0 clients may omit Host
+        var name = host.lowercased()
+        if name.hasPrefix("[") {
+            name = String(name.prefix(while: { $0 != "]" }).dropFirst())
+        } else if let colon = name.lastIndex(of: ":") {
+            name = String(name[..<colon])
+        }
+        return name == "localhost" || name == "127.0.0.1" || name == "::1"
     }
 
     // MARK: - Connection Handling
@@ -157,6 +240,17 @@ class AgentServer {
         }
 
         let body = String(request[bodyRange.upperBound...])
+        let headers = parseHeaders(request[..<bodyRange.lowerBound])
+
+        // Browsers always attach Origin to cross-site fetches; legitimate clients (sr, sr-mcp) never do.
+        if headers["origin"] != nil {
+            sendHTTPResponse(connection, status: 403, body: #"{"error":"Browser requests are not allowed"}"#)
+            return
+        }
+        guard isLoopbackHost(headers["host"]) else {
+            sendHTTPResponse(connection, status: 403, body: #"{"error":"Invalid Host header"}"#)
+            return
+        }
 
         // Check method
         let firstLine = request.prefix(while: { $0 != "\r" && $0 != "\n" })
@@ -176,6 +270,11 @@ class AgentServer {
 
         guard firstLine.hasPrefix("POST") else {
             sendHTTPResponse(connection, status: 405, body: #"{"error":"Method not allowed. Use POST for JSON-RPC."}"#)
+            return
+        }
+
+        guard tokenMatches(headers[Self.tokenHeader]) else {
+            sendHTTPResponse(connection, status: 401, body: #"{"error":"Missing or invalid X-SR-Token. Read it from ~/.screenrecorder/agent-token."}"#)
             return
         }
 
@@ -240,6 +339,8 @@ class AgentServer {
         switch status {
         case 200: statusText = "OK"
         case 400: statusText = "Bad Request"
+        case 401: statusText = "Unauthorized"
+        case 403: statusText = "Forbidden"
         case 405: statusText = "Method Not Allowed"
         default: statusText = "Error"
         }
@@ -249,7 +350,6 @@ class AgentServer {
             "HTTP/1.1 \(status) \(statusText)",
             "Content-Type: application/json",
             "Content-Length: \(bodyData.count)",
-            "Access-Control-Allow-Origin: *",
             "Connection: close",
             "", ""
         ].joined(separator: "\r\n")

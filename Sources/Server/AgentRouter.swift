@@ -98,13 +98,13 @@ class AgentRouter {
         case "input.middle_click":
             return try inputMiddleClick(params: params)
         case "input.drag":
-            return try inputDrag(params: params)
+            return try await serializedInput { try await self.inputDrag(params: params) }
         case "input.scroll":
             return try inputScroll(params: params)
         case "input.move_mouse":
             return try inputMoveMouse(params: params)
         case "input.type_text":
-            return try inputTypeText(params: params)
+            return try await serializedInput { try await self.inputTypeText(params: params) }
         case "input.press_key":
             return try inputPressKey(params: params)
         case "input.hotkey":
@@ -112,7 +112,7 @@ class AgentRouter {
         case "input.click_element":
             return try await inputClickElement(params: params)
         case "input.type_to_field":
-            return try await inputTypeToField(params: params)
+            return try await serializedInput { try await self.inputTypeToField(params: params) }
         case "input.ax_click":
             return try await inputAxClick(params: params)
         case "input.ax_type":
@@ -134,9 +134,9 @@ class AgentRouter {
 
         // App control
         case "app.launch":
-            return try launchApp(params: params)
+            return try await launchApp(params: params)
         case "app.activate":
-            return try activateApp(params: params)
+            return try await activateApp(params: params)
         case "app.list":
             return listApps()
 
@@ -176,7 +176,7 @@ class AgentRouter {
 
         // Shell command execution
         case "shell.exec":
-            return try execShellCommand(params: params)
+            return try await execShellCommand(params: params)
 
         // Accessibility permission
         case "accessibility.check":
@@ -217,7 +217,7 @@ class AgentRouter {
         case "app.quit":
             return try quitApp(params: params)
         case "app.relaunch":
-            return try relaunchApp(params: params)
+            return try await relaunchApp(params: params)
         case "app.hide":
             return try hideApp(params: params)
 
@@ -233,11 +233,27 @@ class AgentRouter {
 
         // Sleep / delay
         case "sleep":
-            return try sleepMs(params: params)
+            return try await sleepMs(params: params)
 
         default:
             throw AgentError.methodNotFound(method)
         }
+    }
+
+    /// Tail of the queue of multi-step synthesized-input actions.
+    private var inputQueueTail: Task<Void, Never>?
+
+    /// Run multi-step input (typing, dragging) one at a time. These handlers suspend between
+    /// events so the main thread stays responsive; without this, two concurrent requests would
+    /// interleave their keystrokes.
+    private func serializedInput(_ operation: @escaping () async throws -> [String: Any]) async throws -> [String: Any] {
+        let previous = inputQueueTail
+        let task = Task { @MainActor () async throws -> [String: Any] in
+            await previous?.value
+            return try await operation()
+        }
+        inputQueueTail = Task { _ = try? await task.value }
+        return try await task.value
     }
 
     /// Gate check — returns an error result if the action is blocked, nil if allowed.
@@ -1409,7 +1425,7 @@ class AgentRouter {
         return ["ok": true, "middle_clicked_at": ["x": point.x, "y": point.y], "target_pid": Int(targetPid), "method_used": targetPid == 0 ? "cg_event_global" : "cg_event_to_pid", "cursor_moved": targetPid == 0]
     }
 
-    private func inputDrag(params: [String: Any]?) throws -> [String: Any] {
+    private func inputDrag(params: [String: Any]?) async throws -> [String: Any] {
         guard InputSynthesizer.checkAccessibilityPermission() else {
             return ["ok": false, "error": "Accessibility permission not granted"]
         }
@@ -1432,7 +1448,7 @@ class AgentRouter {
             characteristics: [.usesFrontmostInput, .movesRealCursor]
         ) { return blocked }
         maybeActivateNativeShield(params: params)
-        inputSynthesizer.drag(from: from, to: to, duration: duration, steps: steps)
+        await inputSynthesizer.drag(from: from, to: to, duration: duration, steps: steps)
         return ["ok": true, "dragged_from": ["x": from.x, "y": from.y], "dragged_to": ["x": to.x, "y": to.y]]
     }
 
@@ -1481,7 +1497,7 @@ class AgentRouter {
         return ["ok": true, "moved_to": ["x": point.x, "y": point.y]]
     }
 
-    private func inputTypeText(params: [String: Any]?) throws -> [String: Any] {
+    private func inputTypeText(params: [String: Any]?) async throws -> [String: Any] {
         guard InputSynthesizer.checkAccessibilityPermission() else {
             return ["ok": false, "error": "Accessibility permission not granted"]
         }
@@ -1497,7 +1513,7 @@ class AgentRouter {
             characteristics: characteristics
         ) { return blocked }
         maybeActivateNativeShield(params: params)
-        inputSynthesizer.typeText(text, intervalMs: intervalMs, targetPid: targetPid)
+        await inputSynthesizer.typeText(text, intervalMs: intervalMs, targetPid: targetPid)
         return ["ok": true, "typed": text, "char_count": text.count, "target_pid": Int(targetPid)]
     }
 
@@ -1737,7 +1753,7 @@ class AgentRouter {
                 inputSynthesizer.click(at: center, targetPid: targetPid)
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
-            inputSynthesizer.typeText(text, intervalMs: intervalMs, targetPid: targetPid)
+            await inputSynthesizer.typeText(text, intervalMs: intervalMs, targetPid: targetPid)
             let method = targetPid == 0 ? "cg_event_global" : "cg_event_to_pid"
             return [
                 "ok": true, "typed": text, "field": fieldHint,
@@ -1763,7 +1779,7 @@ class AgentRouter {
             showInputFeedback(at: CGPoint(x: cx, y: cy), targetPid: targetPid, params: params)
             inputSynthesizer.click(at: CGPoint(x: cx, y: cy), targetPid: targetPid)
             try await Task.sleep(nanoseconds: 150_000_000)
-            inputSynthesizer.typeText(text, intervalMs: intervalMs, targetPid: targetPid)
+            await inputSynthesizer.typeText(text, intervalMs: intervalMs, targetPid: targetPid)
             return [
                 "ok": true, "typed": text, "field": fieldHint,
                 "method": "ocr_fallback", "method_used": "ocr_fallback",
@@ -2089,7 +2105,7 @@ class AgentRouter {
     // MARK: - App Control
 
 
-    private func launchApp(params: [String: Any]?) throws -> [String: Any] {
+    private func launchApp(params: [String: Any]?) async throws -> [String: Any] {
         guard let name = params?["name"] as? String else {
             throw AgentError.invalidParams("Missing 'name' parameter (app name or bundle identifier)")
         }
@@ -2105,11 +2121,11 @@ class AgentRouter {
         guard InputSynthesizer.launchApp(named: name, activate: activate) else {
             return ["ok": false, "error": "Could not launch app: \(name)"]
         }
-        let focused = activate ? waitForFocus(appName: name, timeoutMs: 3000) : false
+        let focused = activate ? await waitForFocus(appName: name, timeoutMs: 3000) : false
         return ["ok": true, "launched": name, "focused": focused, "activated": activate]
     }
 
-    private func activateApp(params: [String: Any]?) throws -> [String: Any] {
+    private func activateApp(params: [String: Any]?) async throws -> [String: Any] {
         guard let name = params?["name"] as? String else {
             throw AgentError.invalidParams("Missing 'name' parameter")
         }
@@ -2122,20 +2138,21 @@ class AgentRouter {
             return ["ok": false, "error": "Could not activate app: \(name). Is it running?"]
         }
         // Wait for app to become frontmost (up to 2s)
-        let focused = waitForFocus(appName: name, timeoutMs: 2000)
+        let focused = await waitForFocus(appName: name, timeoutMs: 2000)
         return ["ok": true, "activated": name, "focused": focused]
     }
 
     /// Poll until the named app is frontmost or timeout expires.
     /// Returns true if focus was confirmed, false if timed out.
-    private func waitForFocus(appName: String, timeoutMs: Int) -> Bool {
+    private func waitForFocus(appName: String, timeoutMs: Int) async -> Bool {
         let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000.0)
         while Date() < deadline {
             let frontName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
             if frontName.localizedCaseInsensitiveContains(appName) {
                 return true
             }
-            Thread.sleep(forTimeInterval: 0.1)
+            // Must yield the main actor: frontmostApplication is updated by main-thread notifications.
+            try? await Task.sleep(nanoseconds: 100_000_000)
         }
         return false
     }
@@ -2238,12 +2255,14 @@ class AgentRouter {
 
     // MARK: - Shell Command Execution
 
-    private func execShellCommand(params: [String: Any]?) throws -> [String: Any] {
+    private func execShellCommand(params: [String: Any]?) async throws -> [String: Any] {
         guard let command = params?["command"] as? String else {
             throw AgentError.invalidParams("Missing 'command' parameter")
         }
-        let timeout = params?["timeout"] as? Double ?? 30
-        return InputSynthesizer.runShellCommand(command, timeout: timeout)
+        let timeout = (params?["timeout"] as? Double) ?? (params?["timeout"] as? Int).map(Double.init) ?? 30
+        // Subject to the kill switch, rate limit, confirmation mode and audit log like every other action.
+        if let blocked = safetyGate(action: "shell: \(command.prefix(120))") { return blocked }
+        return await InputSynthesizer.runShellCommand(command, timeout: timeout)
     }
 
     // MARK: - Accessibility Permission
@@ -2539,7 +2558,7 @@ class AgentRouter {
         return ["ok": true, "terminated": apps.compactMap { $0.localizedName }]
     }
 
-    private func relaunchApp(params: [String: Any]?) throws -> [String: Any] {
+    private func relaunchApp(params: [String: Any]?) async throws -> [String: Any] {
         guard let name = params?["name"] as? String else {
             throw AgentError.invalidParams("Missing 'name' parameter")
         }
@@ -2550,7 +2569,7 @@ class AgentRouter {
         ) { return blocked }
         // Quit then relaunch
         _ = try? quitApp(params: params)
-        Thread.sleep(forTimeInterval: 1.0)
+        try await Task.sleep(nanoseconds: 1_000_000_000)
         let launched = InputSynthesizer.launchApp(named: name)
         return ["ok": launched, "action": "relaunch", "app": name]
     }
@@ -2677,9 +2696,9 @@ class AgentRouter {
 
     // MARK: - Sleep
 
-    private func sleepMs(params: [String: Any]?) throws -> [String: Any] {
-        let ms = params?["ms"] as? Int ?? params?["duration"] as? Int ?? 500
-        usleep(UInt32(ms) * 1000)
+    private func sleepMs(params: [String: Any]?) async throws -> [String: Any] {
+        let ms = max(0, params?["ms"] as? Int ?? params?["duration"] as? Int ?? 500)
+        try await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
         return ["ok": true, "slept_ms": ms]
     }
 }

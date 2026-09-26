@@ -115,6 +115,13 @@ This is the core pattern for AI-driven native app automation:
 
 All commands talk to the running app over `localhost:19820`. Override with `--port`.
 
+Requests are authenticated with a random token the app writes to `~/.screenrecorder/agent-token` (mode 0600) on every launch; `sr` and `sr-mcp` send it automatically in the `X-SR-Token` header. Requests from browsers (anything with an `Origin` header) are rejected. To script the server directly:
+
+```bash
+curl -s localhost:19820 -H "X-SR-Token: $(cat ~/.screenrecorder/agent-token)" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"status"}'
+```
+
 ---
 
 ### `status`

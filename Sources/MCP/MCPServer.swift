@@ -654,7 +654,10 @@ final class MCPServer {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 5
+        if let token = AgentAuth.token() {
+            request.setValue(token, forHTTPHeaderField: AgentAuth.header)
+        }
+        request.timeoutInterval = AgentAuth.timeout(method: method, params: params)
 
         var body: [String: Any] = [
             "jsonrpc": "2.0",
@@ -667,6 +670,11 @@ final class MCPServer {
 
         let (data, _) = try await URLSession.shared.data(for: request)
         let response = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+
+        // HTTP-level rejections (401/403) carry a plain string error.
+        if let error = response["error"] as? String {
+            throw NSError(domain: "RPC", code: -1, userInfo: [NSLocalizedDescriptionKey: error])
+        }
 
         if let error = response["error"] as? [String: Any] {
             let message = error["message"] as? String ?? "Unknown error"

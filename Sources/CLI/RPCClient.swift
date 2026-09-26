@@ -17,7 +17,10 @@ struct RPCClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("close", forHTTPHeaderField: "Connection")
-        request.timeoutInterval = 5
+        if let token = AgentAuth.token() {
+            request.setValue(token, forHTTPHeaderField: AgentAuth.header)
+        }
+        request.timeoutInterval = AgentAuth.timeout(method: method, params: params)
 
         var body: [String: Any] = [
             "jsonrpc": "2.0",
@@ -52,11 +55,13 @@ struct RPCClient {
             let noServerCodes: Set<Int> = [
                 NSURLErrorCannotConnectToHost,    // -1004
                 NSURLErrorNetworkConnectionLost,  // -1005
-                NSURLErrorTimedOut,               // -1001
                 -1,                               // connection refused (POSIX 61)
             ]
             if noServerCodes.contains(nsError.code) {
                 throw CLIError.appNotRunning
+            }
+            if nsError.code == NSURLErrorTimedOut {
+                throw CLIError.timedOut(method)
             }
             throw CLIError.networkError(error.localizedDescription)
         }
@@ -67,6 +72,11 @@ struct RPCClient {
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw CLIError.invalidResponse
+        }
+
+        // HTTP-level rejections (401/403) carry a plain string error.
+        if let error = json["error"] as? String {
+            throw CLIError.rpcError(code: -1, message: error)
         }
 
         if let error = json["error"] as? [String: Any] {
@@ -85,6 +95,7 @@ struct RPCClient {
 
 enum CLIError: LocalizedError {
     case appNotRunning
+    case timedOut(String)
     case networkError(String)
     case emptyResponse
     case invalidResponse
@@ -94,6 +105,8 @@ enum CLIError: LocalizedError {
         switch self {
         case .appNotRunning:
             return "Screen Recorder is not running. Launch the desktop app (check your menu bar)."
+        case .timedOut(let method):
+            return "Timed out waiting for '\(method)'. The app may still be running the action."
         case .networkError(let msg):
             return "Network error: \(msg)"
         case .emptyResponse:
@@ -128,4 +141,42 @@ func printResult(_ result: [String: Any], indent: String = "") {
 func jsonString(_ result: [String: Any]) throws -> String {
     let data = try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
     return String(data: data, encoding: .utf8) ?? "{}"
+}
+
+/// Shared-secret + timeout helpers for talking to the app's agent server.
+/// Kept in sync with `AgentServer` (token file path and header name).
+enum AgentAuth {
+    static let header = "X-SR-Token"
+
+    static var tokenFileURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".screenrecorder", isDirectory: true)
+            .appendingPathComponent("agent-token")
+    }
+
+    /// The token the running app wrote at launch, or nil if the app isn't running.
+    static func token() -> String? {
+        guard let data = try? Data(contentsOf: tokenFileURL),
+              let token = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !token.isEmpty else { return nil }
+        return token
+    }
+
+    /// Client-side timeout for an RPC. Long-running methods (shell commands, sleeps, slow typing)
+    /// get enough headroom that the client doesn't give up while the app is still working.
+    static func timeout(method: String, params: [String: Any]?) -> TimeInterval {
+        func number(_ key: String) -> Double? {
+            if let d = params?[key] as? Double { return d }
+            if let i = params?[key] as? Int { return Double(i) }
+            return nil
+        }
+        var seconds: TimeInterval = 30
+        if let t = number("timeout") { seconds = max(seconds, t + 10) }
+        if method == "sleep", let ms = number("ms") ?? number("duration") { seconds = max(seconds, ms / 1000 + 10) }
+        if let text = params?["text"] as? String {
+            let interval = number("interval_ms") ?? 50
+            seconds = max(seconds, Double(text.count) * interval / 1000 + 10)
+        }
+        return seconds
+    }
 }

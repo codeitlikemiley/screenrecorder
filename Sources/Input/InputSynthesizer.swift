@@ -141,12 +141,12 @@ class InputSynthesizer {
     ///   - to: Ending screen coordinates
     ///   - duration: How long the drag takes (seconds). Default 0.5s.
     ///   - steps: Number of intermediate points for smooth movement.
-    func drag(from: CGPoint, to: CGPoint, duration: TimeInterval = 0.5, steps: Int = 20) {
+    func drag(from: CGPoint, to: CGPoint, duration: TimeInterval = 0.5, steps: Int = 20) async {
         // Mouse down at start
         guard let downEvent = CGEvent(mouseEventSource: eventSource, mouseType: .leftMouseDown, mouseCursorPosition: from, mouseButton: .left) else { return }
         downEvent.post(tap: .cghidEventTap)
 
-        let stepDelay = UInt32(duration / Double(steps) * 1_000_000) // microseconds
+        let stepDelayNs = UInt64(max(0, duration) / Double(max(1, steps)) * 1_000_000_000)
 
         // Interpolate movement
         for i in 1...steps {
@@ -157,7 +157,8 @@ class InputSynthesizer {
 
             guard let dragEvent = CGEvent(mouseEventSource: eventSource, mouseType: .leftMouseDragged, mouseCursorPosition: current, mouseButton: .left) else { continue }
             dragEvent.post(tap: .cghidEventTap)
-            usleep(stepDelay)
+            // Task.sleep (not usleep) so callers on the main actor don't freeze the UI.
+            try? await Task.sleep(nanoseconds: stepDelayNs)
         }
 
         // Mouse up at end
@@ -253,10 +254,12 @@ class InputSynthesizer {
     ///   - text: The text to type
     ///   - intervalMs: Delay between characters in milliseconds (default 50ms)
     ///   - targetPid: If non-zero, deliver keystrokes directly to this process without stealing focus.
-    func typeText(_ text: String, intervalMs: Int = 50, targetPid: pid_t = 0) {
+    func typeText(_ text: String, intervalMs: Int = 50, targetPid: pid_t = 0) async {
+        let intervalNs = UInt64(max(0, intervalMs)) * 1_000_000
         for char in text {
             typeCharacter(char, targetPid: targetPid)
-            usleep(UInt32(intervalMs) * 1000)
+            // Task.sleep (not usleep) so callers on the main actor don't freeze the UI.
+            try? await Task.sleep(nanoseconds: intervalNs)
         }
     }
 
@@ -375,7 +378,16 @@ class InputSynthesizer {
     ///   - command: Shell command string (executed via /bin/zsh -c)
     ///   - timeout: Maximum execution time in seconds (default 30)
     /// - Returns: Dictionary with stdout, stderr, exit code
-    static func runShellCommand(_ command: String, timeout: TimeInterval = 30) -> [String: Any] {
+    static func runShellCommand(_ command: String, timeout: TimeInterval = 30) async -> [String: Any] {
+        // Run on a background queue: the process wait must never block the main thread.
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: runShellCommandBlocking(command, timeout: timeout))
+            }
+        }
+    }
+
+    private static func runShellCommandBlocking(_ command: String, timeout: TimeInterval) -> [String: Any] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-c", command]
@@ -385,35 +397,11 @@ class InputSynthesizer {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+
         do {
             try process.run()
-
-            // Wait with timeout
-            let deadline = Date().addingTimeInterval(timeout)
-            while process.isRunning && Date() < deadline {
-                Thread.sleep(forTimeInterval: 0.1)
-            }
-
-            if process.isRunning {
-                process.terminate()
-                return [
-                    "ok": false,
-                    "error": "Command timed out after \(Int(timeout))s",
-                    "exit_code": -1,
-                ]
-            }
-
-            let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let stdout = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let stderr = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-            return [
-                "ok": process.terminationStatus == 0,
-                "stdout": stdout,
-                "stderr": stderr,
-                "exit_code": Int(process.terminationStatus),
-            ]
         } catch {
             return [
                 "ok": false,
@@ -421,6 +409,41 @@ class InputSynthesizer {
                 "exit_code": -1,
             ]
         }
+
+        // Drain both pipes while the process runs. Reading only after exit deadlocks
+        // once the output exceeds the pipe buffer (~64 KB): the child blocks on write.
+        var stdoutData = Data()
+        var stderrData = Data()
+        let readers = DispatchGroup()
+        DispatchQueue.global(qos: .userInitiated).async(group: readers) {
+            stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        }
+        DispatchQueue.global(qos: .userInitiated).async(group: readers) {
+            stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        }
+
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            _ = exited.wait(timeout: .now() + 2)
+            return [
+                "ok": false,
+                "error": "Command timed out after \(Int(timeout))s",
+                "exit_code": -1,
+            ]
+        }
+
+        // A backgrounded grandchild can keep the pipes open after the shell exits; don't wait forever.
+        _ = readers.wait(timeout: .now() + 2)
+
+        let stdout = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let stderr = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        return [
+            "ok": process.terminationStatus == 0,
+            "stdout": stdout,
+            "stderr": stderr,
+            "exit_code": Int(process.terminationStatus),
+        ]
     }
 
     // MARK: - Key Code Mapping
